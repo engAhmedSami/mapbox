@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
@@ -26,6 +28,7 @@ class _CustomMapState extends State<CustomMap> {
   late LocationController _locationController;
   late NavigationController _navigationController;
   late StorageController _storageController;
+  bool _layersInitialized = false;
 
   // معرفات طبقات الخريطة
   final String _routeLayerId = 'route-layer';
@@ -66,6 +69,8 @@ class _CustomMapState extends State<CustomMap> {
             ),
             zoom: AppConstants.defaultZoom,
           ),
+          onStyleLoadedListener:
+              (eventData) => _onStyleLoaded(eventData as MapLoadedEventData),
         ),
 
         // زر العودة إلى الموقع الحالي
@@ -111,14 +116,20 @@ class _CustomMapState extends State<CustomMap> {
   // تنفيذ عند إنشاء الخريطة
   void _onMapCreated(MapboxMap mapboxMap) {
     _mapboxMap = mapboxMap;
+    log('تم إنشاء الخريطة');
 
-    // تهيئة المصادر والطبقات
+    // نضيف listener لمراقبة التغييرات بمجرد تحميل الخريطة
+    _locationController.addListener(_onLocationControllerChanged);
+    _navigationController.addListener(_onNavigationControllerChanged);
+  }
+
+  // تنفيذ عند تحميل نمط الخريطة
+  void _onStyleLoaded(MapLoadedEventData eventData) {
+    log('تم تحميل نمط الخريطة');
+    // تهيئة المصادر والطبقات بعد تحميل النمط
     _initializeMapLayers();
 
     // الانتقال إلى الموقع الحالي عند توفره
-    _locationController.addListener(_onLocationControllerChanged);
-    _navigationController.addListener(_onNavigationControllerChanged);
-
     Future.delayed(const Duration(milliseconds: 500), () {
       _goToCurrentLocation();
     });
@@ -126,12 +137,18 @@ class _CustomMapState extends State<CustomMap> {
 
   // تهيئة طبقات الخريطة
   Future<void> _initializeMapLayers() async {
+    if (_layersInitialized || _mapboxMap == null) {
+      return;
+    }
+
     try {
+      log('جاري تهيئة طبقات الخريطة...');
+
       // إضافة مصدر ومكان للمستخدم
       await _mapboxMap?.style.addSource(
         GeoJsonSource(
           id: _userLocationSourceId,
-          data: _createPointFeatureCollection(0, 0),
+          data: _createEmptyPointFeatureCollection(),
         ),
       );
 
@@ -140,9 +157,9 @@ class _CustomMapState extends State<CustomMap> {
           id: _userLocationLayerId,
           sourceId: _userLocationSourceId,
           circleRadius: 8.0,
-          circleColor: 0xFF4882C4, // لون أزرق للمستخدم
+          circleColor: Colors.blue.value, // لون أزرق للمستخدم
           circleStrokeWidth: 2.0,
-          circleStrokeColor: 0xFFFFFFFF, // حدود بيضاء
+          circleStrokeColor: Colors.white.value, // حدود بيضاء
         ),
       );
 
@@ -150,7 +167,7 @@ class _CustomMapState extends State<CustomMap> {
       await _mapboxMap?.style.addSource(
         GeoJsonSource(
           id: _destinationSourceId,
-          data: _createPointFeatureCollection(0, 0),
+          data: _createEmptyPointFeatureCollection(),
         ),
       );
 
@@ -160,9 +177,9 @@ class _CustomMapState extends State<CustomMap> {
           id: _destinationCircleLayerId,
           sourceId: _destinationSourceId,
           circleRadius: 10.0,
-          circleColor: 0xffFF0000, // لون أحمر للوجهة
+          circleColor: Colors.red.value, // لون أحمر للوجهة
           circleStrokeWidth: 2.0,
-          circleStrokeColor: 0xffFFFFFF, // حدود بيضاء
+          circleStrokeColor: Colors.white.value, // حدود بيضاء
         ),
       );
 
@@ -176,9 +193,9 @@ class _CustomMapState extends State<CustomMap> {
           textSize: 12.0,
           textOffset: [0, 1.5],
           textAnchor: TextAnchor.TOP,
-          textColor: 0xff000000, // لون أسود للنص
+          textColor: Colors.black.value, // لون أسود للنص
           textHaloWidth: 1.0,
-          textHaloColor: 0xffffffff, // هالة بيضاء للنص
+          textHaloColor: Colors.white.value, // هالة بيضاء للنص
         ),
       );
 
@@ -194,14 +211,35 @@ class _CustomMapState extends State<CustomMap> {
         LineLayer(
           id: _routeLayerId,
           sourceId: _routeSourceId,
-          lineColor: 0xff4882C4, // استخدام اللون من الثوابت
+          lineColor: int.parse(
+            '0xFF${AppConstants.routeLineColor.substring(1)}',
+          ), // استخدام اللون من الثوابت
           lineWidth: AppConstants.routeLineWidth,
           lineCap: LineCap.ROUND,
           lineJoin: LineJoin.ROUND,
         ),
       );
 
+      _layersInitialized = true;
       log('تم تهيئة طبقات الخريطة بنجاح');
+
+      // تحديث الخريطة بعد تهيئة الطبقات
+      if (_locationController.currentLocation != null) {
+        _updateUserLocationOnMap(_locationController.currentLocation!);
+      }
+
+      if (_navigationController.isNavigating) {
+        if (_navigationController.currentRoute != null) {
+          _updateRouteOnMap(_navigationController.currentRoute!);
+        }
+        if (_navigationController.destination != null) {
+          _updateDestinationOnMap(
+            _navigationController.destination!.latitude,
+            _navigationController.destination!.longitude,
+            _navigationController.destination!.placeName,
+          );
+        }
+      }
     } catch (e) {
       log('خطأ في تهيئة طبقات الخريطة: $e');
     }
@@ -209,16 +247,18 @@ class _CustomMapState extends State<CustomMap> {
 
   // الاستجابة للتغييرات في موقع المستخدم
   void _onLocationControllerChanged() {
-    if (_locationController.currentLocation != null) {
+    if (_locationController.currentLocation != null && _layersInitialized) {
       _updateUserLocationOnMap(_locationController.currentLocation!);
     }
   }
 
   // الاستجابة للتغييرات في حالة التنقل
   void _onNavigationControllerChanged() {
+    if (!_layersInitialized) return;
+
     if (_navigationController.isNavigating) {
       // تأخير قصير للتأكد من تطبيق التغييرات
-      Future.delayed(Duration(milliseconds: 100), () {
+      Future.delayed(const Duration(milliseconds: 100), () {
         if (_navigationController.currentRoute != null) {
           log(
             'تحديث المسار - نقاط: ${_navigationController.currentRoute!.geometry.length}',
@@ -234,11 +274,6 @@ class _CustomMapState extends State<CustomMap> {
             _navigationController.destination!.placeName,
           );
         }
-
-        if (_locationController.currentLocation != null) {
-          log('تحديث موقع المستخدم');
-          _updateUserLocationOnMap(_locationController.currentLocation!);
-        }
       });
     } else {
       _clearRouteFromMap();
@@ -248,13 +283,19 @@ class _CustomMapState extends State<CustomMap> {
   // تحديث موقع المستخدم على الخريطة
   void _updateUserLocationOnMap(LocationModel location) {
     try {
-      final source =
+      if (!_layersInitialized || _mapboxMap == null) return;
+
+      final GeoJsonSource? source =
           _mapboxMap?.style.getSource(_userLocationSourceId) as GeoJsonSource?;
       if (source != null) {
         log('تحديث موقع المستخدم: ${location.latitude}, ${location.longitude}');
-        source.updateGeoJSON(
-          _createPointFeatureCollection(location.latitude, location.longitude),
+        final String geoJson = _createPointFeatureCollection(
+          location.latitude,
+          location.longitude,
         );
+        source.updateGeoJSON(geoJson);
+      } else {
+        log('لم يتم العثور على مصدر موقع المستخدم');
       }
     } catch (e) {
       log('خطأ في تحديث موقع المستخدم على الخريطة: $e');
@@ -264,17 +305,20 @@ class _CustomMapState extends State<CustomMap> {
   // تحديث الوجهة على الخريطة
   void _updateDestinationOnMap(double latitude, double longitude, String name) {
     try {
-      final source =
+      if (!_layersInitialized || _mapboxMap == null) return;
+
+      final GeoJsonSource? source =
           _mapboxMap?.style.getSource(_destinationSourceId) as GeoJsonSource?;
       if (source != null) {
         log('تحديث الوجهة: $latitude, $longitude, $name');
-        source.updateGeoJSON(
-          _createPointFeatureCollection(
-            latitude,
-            longitude,
-            properties: {'name': name},
-          ),
+        final String geoJson = _createPointFeatureCollection(
+          latitude,
+          longitude,
+          properties: {'name': name},
         );
+        source.updateGeoJSON(geoJson);
+      } else {
+        log('لم يتم العثور على مصدر الوجهة');
       }
     } catch (e) {
       log('خطأ في تحديث الوجهة على الخريطة: $e');
@@ -284,17 +328,22 @@ class _CustomMapState extends State<CustomMap> {
   // تحديث المسار على الخريطة
   void _updateRouteOnMap(RouteModel route) {
     try {
-      final source =
+      if (!_layersInitialized || _mapboxMap == null) return;
+
+      final GeoJsonSource? source =
           _mapboxMap?.style.getSource(_routeSourceId) as GeoJsonSource?;
       if (source != null) {
         log('تحديث المسار - عدد النقاط: ${route.geometry.length}');
         if (route.geometry.isNotEmpty) {
-          source.updateGeoJSON(_createLineFeatureCollection(route.geometry));
+          final String geoJson = _createLineFeatureCollection(route.geometry);
+          source.updateGeoJSON(geoJson);
           // التركيز على المسار كاملاً
           _fitRouteInView(route.geometry);
         } else {
           log('تحذير: المسار فارغ!');
         }
+      } else {
+        log('لم يتم العثور على مصدر المسار');
       }
     } catch (e) {
       log('خطأ في تحديث المسار على الخريطة: $e');
@@ -303,7 +352,7 @@ class _CustomMapState extends State<CustomMap> {
 
   // ضبط مستوى تكبير الخريطة لرؤية المسار بالكامل
   void _fitRouteInView(List<List<double>> coordinates) {
-    if (coordinates.isEmpty) return;
+    if (coordinates.isEmpty || _mapboxMap == null) return;
 
     try {
       double minLat = 90.0;
@@ -312,6 +361,8 @@ class _CustomMapState extends State<CustomMap> {
       double maxLng = -180.0;
 
       for (final point in coordinates) {
+        if (point.length < 2) continue;
+
         final lng = point[0];
         final lat = point[1];
 
@@ -332,7 +383,14 @@ class _CustomMapState extends State<CustomMap> {
         coordinates: Position(maxLng + lngDelta, maxLat + latDelta),
       );
 
-      // Create CoordinateBounds object correctly
+      // تأكد من أن الإحداثيات صالحة
+      if (!_isValidCoordinate(southwest.coordinates) ||
+          !_isValidCoordinate(northeast.coordinates)) {
+        log('إحداثيات غير صالحة لضبط الخريطة');
+        return;
+      }
+
+      // إنشاء الحدود بشكل صحيح
       final bounds = CoordinateBounds(
         southwest: southwest,
         northeast: northeast,
@@ -344,10 +402,10 @@ class _CustomMapState extends State<CustomMap> {
           ?.cameraForCoordinateBounds(
             bounds,
             MbxEdgeInsets(top: 100, left: 50, bottom: 150, right: 50),
-            null, // bearing (optional)
-            null, // pitch (optional)
-            null, // maxZoom (optional)
-            null, // offset (optional)
+            null, // Optional padding
+            null, // Optional bearing
+            null, // Optional pitch
+            null, // Optional zoom
           )
           .then((camera) {
             _mapboxMap?.flyTo(camera, MapAnimationOptions(duration: 1000));
@@ -359,16 +417,26 @@ class _CustomMapState extends State<CustomMap> {
     }
   }
 
+  // التحقق من صلاحية الإحداثيات
+  bool _isValidCoordinate(Position position) {
+    return position.lat >= -90 &&
+        position.lat <= 90 &&
+        position.lng >= -180 &&
+        position.lng <= 180;
+  }
+
   // مسح المسار من الخريطة
   void _clearRouteFromMap() {
     try {
-      final routeSource =
+      if (!_layersInitialized || _mapboxMap == null) return;
+
+      final GeoJsonSource? routeSource =
           _mapboxMap?.style.getSource(_routeSourceId) as GeoJsonSource?;
       if (routeSource != null) {
         routeSource.updateGeoJSON(_createEmptyLineFeatureCollection());
       }
 
-      final destinationSource =
+      final GeoJsonSource? destinationSource =
           _mapboxMap?.style.getSource(_destinationSourceId) as GeoJsonSource?;
       if (destinationSource != null) {
         destinationSource.updateGeoJSON(_createEmptyPointFeatureCollection());
@@ -382,7 +450,7 @@ class _CustomMapState extends State<CustomMap> {
 
   // الانتقال إلى الموقع الحالي
   void _goToCurrentLocation() {
-    if (_locationController.currentLocation != null) {
+    if (_locationController.currentLocation != null && _mapboxMap != null) {
       _mapboxMap?.flyTo(
         CameraOptions(
           center: Point(
@@ -408,12 +476,21 @@ class _CustomMapState extends State<CustomMap> {
 
   // تحديث نمط الخريطة عند تغيير الوضع
   void _updateMapStyle() {
+    if (_mapboxMap == null) return;
+
     String mapStyle =
         _storageController.isDarkMode
             ? AppConstants.nightMapStyle
             : AppConstants.dayMapStyle;
 
     _mapboxMap?.style.setStyleURI(mapStyle);
+
+    // إعادة تهيئة الطبقات بعد تغيير النمط
+    _layersInitialized = false;
+    _mapboxMap?.style.getStyleURI().then((_) {
+      // ننتظر تحميل النمط الجديد ثم نعيد تهيئة الطبقات
+    });
+
     log('تم تحديث نمط الخريطة: $mapStyle');
   }
 
@@ -437,7 +514,10 @@ class _CustomMapState extends State<CustomMap> {
       'properties': properties ?? {},
     };
 
-    return '{"type":"FeatureCollection","features":[${jsonEncode(feature)}]}';
+    return jsonEncode({
+      'type': 'FeatureCollection',
+      'features': [feature],
+    });
   }
 
   // إنشاء مجموعة خط فارغة لـ GeoJSON
@@ -453,7 +533,10 @@ class _CustomMapState extends State<CustomMap> {
       'properties': {},
     };
 
-    return '{"type":"FeatureCollection","features":[${jsonEncode(feature)}]}';
+    return jsonEncode({
+      'type': 'FeatureCollection',
+      'features': [feature],
+    });
   }
 
   @override
