@@ -34,7 +34,19 @@ class AppConstants {
   static const String routeLineColor = '#4882C4';
 
   // Map Styles
+  // Mapbox Styles
   static const String dayMapStyle = 'mapbox://styles/mapbox/navigation-day-v1';
   static const String nightMapStyle =
       'mapbox://styles/mapbox/navigation-night-v1';
+  static const String streetsStyle = 'mapbox://styles/mapbox/streets-v12';
+  static const String outdoorsStyle = 'mapbox://styles/mapbox/outdoors-v12';
+  static const String lightStyle = 'mapbox://styles/mapbox/light-v11';
+  static const String darkStyle = 'mapbox://styles/mapbox/dark-v11';
+  static const String satelliteStyle = 'mapbox://styles/mapbox/satellite-v9';
+  static const String satelliteStreetsStyle =
+      'mapbox://styles/mapbox/satellite-streets-v12';
+  static const String trafficDayStyle =
+      'mapbox://styles/mapbox/navigation-preview-day-v4';
+  static const String trafficNightStyle =
+      'mapbox://styles/mapbox/navigation-preview-night-v4';
 }

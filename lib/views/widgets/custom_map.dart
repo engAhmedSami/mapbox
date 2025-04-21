@@ -1,7 +1,8 @@
-// ignore_for_file: deprecated_member_use, use_build_context_synchronously
-import 'dart:developer';
+// ignore_for_file: deprecated_member_use, use_build_context_synchronously, avoid_print
 import 'dart:convert';
-import 'dart:async'; // Added for Timer
+import 'dart:async';
+import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:provider/provider.dart';
@@ -15,12 +16,12 @@ import '../../models/route_model.dart';
 
 class CustomMap extends StatefulWidget {
   final Function(PlaceModel)? onPlaceSelected;
-  final bool followUserLocation; // Added to enable live tracking
+  final bool followUserLocation;
 
   const CustomMap({
     super.key,
     this.onPlaceSelected,
-    this.followUserLocation = false, // Default is false
+    this.followUserLocation = false,
   });
 
   @override
@@ -33,7 +34,17 @@ class _CustomMapState extends State<CustomMap> {
   late NavigationController _navigationController;
   late StorageController _storageController;
   bool _layersInitialized = false;
-  Timer? _cameraUpdateTimer; // Added for periodic camera updates
+  Timer? _cameraUpdateTimer;
+  bool isFirstLoad = true;
+
+  // Direction arrow and camera control variables
+  final String _directionArrowSourceId = 'direction-arrow-source';
+  final String _directionArrowLayerId = 'direction-arrow-layer';
+  double _userBearing = 0; // Current user direction
+  bool _isFollowingUser = false; // Is camera following user?
+  bool _arrowAdded = false; // Has the arrow layer been added?
+  LocationModel?
+  _previousLocation; // Store previous location to calculate bearing
 
   // Map layer identifiers
   final String _routeLayerId = 'route-layer';
@@ -43,9 +54,9 @@ class _CustomMapState extends State<CustomMap> {
   final String _destinationSourceId = 'destination-source';
   final String _destinationLayerId = 'destination-layer';
   final String _destinationCircleLayerId = 'destination-circle-layer';
-  final String _customLocationSourceId = 'custom-location-source';
-  final String _customLocationLayerId = 'custom-location-layer';
-  bool _customLocationAdded = false;
+  final String customLocationSourceId = 'custom-location-source';
+  final String customLocationLayerId = 'custom-location-layer';
+  bool customLocationAdded = false;
 
   @override
   void initState() {
@@ -58,6 +69,10 @@ class _CustomMapState extends State<CustomMap> {
     _locationController = Provider.of<LocationController>(context);
     _navigationController = Provider.of<NavigationController>(context);
     _storageController = Provider.of<StorageController>(context);
+
+    // Add listeners to ensure we catch all state changes
+    _locationController.addListener(_onLocationControllerChanged);
+    _navigationController.addListener(_onNavigationControllerChanged);
   }
 
   @override
@@ -65,7 +80,7 @@ class _CustomMapState extends State<CustomMap> {
     String mapStyle =
         _storageController.isDarkMode
             ? AppConstants.nightMapStyle
-            : AppConstants.dayMapStyle;
+            : AppConstants.outdoorsStyle;
 
     return Stack(
       children: [
@@ -81,9 +96,10 @@ class _CustomMapState extends State<CustomMap> {
             ),
             zoom: AppConstants.defaultZoom,
           ),
-          onStyleLoadedListener: (styleLoadedEventData) => _onStyleLoaded,
-          onTapListener: _onMapTap, // Added to set destination on tap
+          onStyleLoadedListener: _onStyleLoaded,
+          onTapListener: _onMapTap,
         ),
+        // Current location button
         Positioned(
           bottom: 110,
           right: 16,
@@ -98,6 +114,7 @@ class _CustomMapState extends State<CustomMap> {
             ),
           ),
         ),
+        // Toggle map style button
         Positioned(
           bottom: 160,
           right: 16,
@@ -117,30 +134,24 @@ class _CustomMapState extends State<CustomMap> {
             ),
           ),
         ),
-        // Positioned(
-        //   bottom: 210,
-        //   right: 16,
-        //   child: FloatingActionButton(
-        //     heroTag: 'btn_add_custom_marker',
-        //     mini: true,
-        //     backgroundColor: Theme.of(context).colorScheme.surface,
-        //     onPressed: () async {
-        //       try {
-        //         if (_mapboxMap != null) {
-        //           CameraState cameraState = await _mapboxMap!.getCameraState();
-        //           double latitude =
-        //               cameraState.center.coordinates.lat.toDouble();
-        //           double longitude =
-        //               cameraState.center.coordinates.lng.toDouble();
-        //           await addCustomMarkerOnMap(latitude, longitude);
-        //         }
-        //       } catch (e) {
-        //         log('Error getting camera position: $e');
-        //       }
-        //     },
-        //     child: Icon(Icons.location_pin, color: Colors.red),
-        //   ),
-        // ),
+        // Toggle follow mode button
+        Positioned(
+          bottom: 210,
+          right: 16,
+          child: FloatingActionButton(
+            heroTag: 'btn_toggle_follow_mode',
+            mini: true,
+            backgroundColor: Theme.of(context).colorScheme.surface,
+            onPressed: _toggleFollowMode,
+            child: Icon(
+              _isFollowingUser ? Icons.navigation : Icons.explore,
+              color:
+                  _isFollowingUser
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -159,43 +170,47 @@ class _CustomMapState extends State<CustomMap> {
 
       // Create a PlaceModel for the tapped location
       PlaceModel selectedPlace = PlaceModel(
-        address: 'Selected Location',
+        address: 'الموقع المحدد',
         id: 'selected',
-        placeName: 'Selected Destination',
+        placeName: 'الوجهة المحددة',
         latitude: latitude,
         longitude: longitude,
       );
 
       // Start navigation to the selected destination
-      _navigationController.startNavigation(
-        selectedPlace,
-        _locationController.currentLocation!,
-      );
+      if (_locationController.currentLocation != null) {
+        _navigationController.startNavigation(
+          selectedPlace,
+          _locationController.currentLocation!,
+        );
 
-      log('Destination set at: $latitude, $longitude');
-      ScaffoldMessenger.of(context as BuildContext).showSnackBar(
-        const SnackBar(content: Text('Destination set. Calculating route...')),
-      );
+        print('Destination set at: $latitude, $longitude');
+        ScaffoldMessenger.of(context as BuildContext).showSnackBar(
+          const SnackBar(content: Text('تم تحديد الوجهة. جارِ حساب المسار...')),
+        );
+      } else {
+        ScaffoldMessenger.of(context as BuildContext).showSnackBar(
+          const SnackBar(content: Text('لم يتم تحديد موقعك الحالي بعد')),
+        );
+      }
     } catch (e) {
-      log('Error setting destination: $e');
+      print('Error setting destination: $e');
       ScaffoldMessenger.of(
         context as BuildContext,
-      ).showSnackBar(SnackBar(content: Text('Error setting destination: $e')));
+      ).showSnackBar(SnackBar(content: Text('خطأ في تحديد الوجهة: $e')));
     }
   }
 
   void _onMapCreated(MapboxMap mapboxMap) {
     _mapboxMap = mapboxMap;
-    log('Map created');
-    _locationController.addListener(_onLocationControllerChanged);
-    _navigationController.addListener(_onNavigationControllerChanged);
+    print('Map created');
 
     // Enable location tracking
     _mapboxMap!.location.updateSettings(
       LocationComponentSettings(
-        enabled: true, // Show user location
-        pulsingEnabled: true, // Add pulsing effect
-        showAccuracyRing: true, // Show accuracy ring
+        enabled: true,
+        pulsingEnabled: true,
+        showAccuracyRing: true,
       ),
     );
 
@@ -209,18 +224,40 @@ class _CustomMapState extends State<CustomMap> {
     }
   }
 
-  void _onStyleLoaded(MapLoadedEventData eventData) {
-    log('Map style loaded');
-    _initializeMapLayers();
-    Future.delayed(const Duration(milliseconds: 500), _goToCurrentLocation);
+  void _onStyleLoaded(styleLoadedEventData) async {
+    print('Map style loaded');
+
+    // Make sure we initialize layers when style is loaded
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    await _initializeMapLayers();
+    _goToCurrentLocation();
+
+    // Check if there's an active navigation and update the map accordingly
+    if (_navigationController.isNavigating) {
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      if (_navigationController.destination != null) {
+        _updateDestinationOnMap(
+          _navigationController.destination!.latitude,
+          _navigationController.destination!.longitude,
+          _navigationController.destination!.placeName,
+        );
+      }
+
+      if (_navigationController.currentRoute != null) {
+        _updateRouteOnMap(_navigationController.currentRoute!);
+      }
+    }
   }
 
   Future<void> _initializeMapLayers() async {
     if (_layersInitialized || _mapboxMap == null) return;
 
     try {
-      log('Initializing map layers...');
+      print('Initializing map layers...');
 
+      // Add user location source and layers
       await _mapboxMap!.style.addSource(
         GeoJsonSource(
           id: _userLocationSourceId,
@@ -250,6 +287,7 @@ class _CustomMapState extends State<CustomMap> {
         ),
       );
 
+      // Add destination source and layers
       await _mapboxMap!.style.addSource(
         GeoJsonSource(
           id: _destinationSourceId,
@@ -282,6 +320,7 @@ class _CustomMapState extends State<CustomMap> {
         ),
       );
 
+      // Add route source and layer
       await _mapboxMap!.style.addSource(
         GeoJsonSource(
           id: _routeSourceId,
@@ -302,9 +341,35 @@ class _CustomMapState extends State<CustomMap> {
         ),
       );
 
-      _layersInitialized = true;
-      log('Map layers initialized successfully');
+      // Add direction arrow source and layer
+      await _mapboxMap!.style.addSource(
+        GeoJsonSource(
+          id: _directionArrowSourceId,
+          data: '{"type":"FeatureCollection","features":[]}',
+        ),
+      );
 
+      await _mapboxMap!.style.addLayer(
+        SymbolLayer(
+          id: _directionArrowLayerId,
+          sourceId: _directionArrowSourceId,
+          iconImage: "arrow", // Name of the arrow image we'll add
+          iconSize: 1.5,
+          iconAllowOverlap: true,
+          iconIgnorePlacement: true,
+          iconRotate:
+              _userBearing, // Rotate arrow based on the calculated bearing
+        ),
+      );
+
+      // Add arrow image to the map
+      await _addArrowImageToMap();
+
+      _layersInitialized = true;
+      _arrowAdded = true;
+      print('Map layers initialized successfully');
+
+      // Update map with current data
       if (_locationController.currentLocation != null) {
         _updateUserLocationOnMap(_locationController.currentLocation!);
       }
@@ -322,50 +387,157 @@ class _CustomMapState extends State<CustomMap> {
         }
       }
     } catch (e) {
-      log('Error initializing map layers: $e');
+      print('Error initializing map layers: $e');
+    }
+  }
+
+  // Add arrow image to the map
+  Future<void> _addArrowImageToMap() async {
+    try {
+      // Create arrow image programmatically
+      final int size = 64;
+      final Uint8List data = Uint8List(size * size * 4);
+
+      // Fill the image data with our arrow
+      for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+          // Calculate distance from center
+          double centerX = size / 2;
+          double centerY = size / 2;
+          double dx = x - centerX;
+          double dy = y - centerY;
+
+          // Define arrow shape
+          bool isArrow = false;
+          bool isArrowBorder = false;
+
+          // Arrow body
+          if (dx.abs() < 8 && dy > 0 && dy < 24) {
+            isArrow = true;
+          }
+
+          // Arrow head
+          if (dy < 0 && dy > -16 && dx.abs() < -dy) {
+            isArrow = true;
+          }
+
+          // Arrow border
+          if (dx.abs() < 10 && dy > -2 && dy < 26 && !isArrow) {
+            isArrowBorder = true;
+          }
+
+          if (dy < 2 && dy > -18 && dx.abs() < (-dy + 2) && !isArrow) {
+            isArrowBorder = true;
+          }
+
+          int pixelIndex = (y * size + x) * 4;
+          if (isArrow) {
+            // Blue fill for the arrow
+            data[pixelIndex] = 72; // R
+            data[pixelIndex + 1] = 130; // G
+            data[pixelIndex + 2] = 196; // B
+            data[pixelIndex + 3] = 255; // A
+          } else if (isArrowBorder) {
+            // White border for the arrow
+            data[pixelIndex] = 255; // R
+            data[pixelIndex + 1] = 255; // G
+            data[pixelIndex + 2] = 255; // B
+            data[pixelIndex + 3] = 255; // A
+          } else {
+            // Transparent
+            data[pixelIndex + 3] = 0; // A
+          }
+        }
+      }
+
+      // Create MbxImage from the Uint8List
+      final MbxImage arrowImage = MbxImage(
+        width: size,
+        height: size,
+        data: data,
+      );
+
+      // Add the image to the map style
+      await _mapboxMap!.style.addStyleImage(
+        "arrow", // imageId
+        1.0, // scale
+        arrowImage, // image
+        false, // sdf
+        [], // stretchX
+        [], // stretchY
+        null, // content
+      );
+
+      print('Arrow image added to map successfully');
+    } catch (e) {
+      print('Error adding arrow image to map: $e');
     }
   }
 
   void _onLocationControllerChanged() {
-    if (_locationController.currentLocation != null && _layersInitialized) {
-      _updateUserLocationOnMap(_locationController.currentLocation!);
+    if (_locationController.currentLocation != null) {
+      if (!_layersInitialized) {
+        _initializeMapLayers();
+      } else {
+        // Store previous location and update with new one
+        _previousLocation = _locationController.currentLocation;
+        _updateUserLocationOnMap(_locationController.currentLocation!);
+
+        // Calculate bearing if we have a previous location
+        if (_previousLocation != null) {
+          _userBearing = _calculateBearing(
+            _previousLocation!.latitude,
+            _previousLocation!.longitude,
+            _locationController.currentLocation!.latitude,
+            _locationController.currentLocation!.longitude,
+          );
+        }
+      }
     }
   }
 
-  void _onNavigationControllerChanged() {
-    if (!_layersInitialized) return;
+  void _onNavigationControllerChanged() async {
+    if (!_layersInitialized) {
+      await _initializeMapLayers();
+      // Return and let the next listener update handle displaying the route
+      return;
+    }
 
     if (_navigationController.isNavigating) {
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_navigationController.currentRoute != null) {
-          log(
-            'Updating route - points: ${_navigationController.currentRoute!.geometry.length}',
-          );
-          _updateRouteOnMap(_navigationController.currentRoute!);
-        }
-        if (_navigationController.destination != null) {
-          log(
-            'Updating destination - ${_navigationController.destination!.placeName}',
-          );
-          _updateDestinationOnMap(
-            _navigationController.destination!.latitude,
-            _navigationController.destination!.longitude,
-            _navigationController.destination!.placeName,
-          );
-        }
-      });
+      print(
+        'Navigation state changed - isNavigating: ${_navigationController.isNavigating}',
+      );
+
+      // Add a slight delay to ensure all data is ready
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      if (_navigationController.currentRoute != null) {
+        print(
+          'Updating route - points: ${_navigationController.currentRoute!.geometry.length}',
+        );
+        _updateRouteOnMap(_navigationController.currentRoute!);
+      } else {
+        print('Navigation active but route is null!');
+      }
+
+      if (_navigationController.destination != null) {
+        print(
+          'Updating destination - ${_navigationController.destination!.placeName}',
+        );
+        _updateDestinationOnMap(
+          _navigationController.destination!.latitude,
+          _navigationController.destination!.longitude,
+          _navigationController.destination!.placeName,
+        );
+      }
     } else {
       _clearRouteFromMap();
     }
   }
 
-  void _updateUserLocationOnMap(LocationModel location) {
+  void _updateUserLocationOnMap(LocationModel location) async {
     try {
       if (!_layersInitialized || _mapboxMap == null) return;
-
-      log(
-        'Updating user location: ${location.latitude}, ${location.longitude}',
-      );
 
       final Map<String, dynamic> featureCollection = {
         'type': 'FeatureCollection',
@@ -382,117 +554,94 @@ class _CustomMapState extends State<CustomMap> {
       };
 
       final String geoJsonString = jsonEncode(featureCollection);
-      final GeoJsonSource? source =
-          _mapboxMap!.style.getSource(_userLocationSourceId) as GeoJsonSource?;
-      if (source != null) {
+
+      // Get the source asynchronously
+      final sourceObj = await _mapboxMap!.style.getSource(
+        _userLocationSourceId,
+      );
+
+      if (sourceObj != null) {
+        // Cast after unwrapping the Future
+        final source = sourceObj as GeoJsonSource;
         source.updateGeoJSON(geoJsonString);
       } else {
-        log('User location source not found');
+        print('User location source not found - reinitializing layers');
+        _layersInitialized = false;
+        await _initializeMapLayers();
+
+        // Try updating the user location again after reinitializing
+        final newSourceObj = await _mapboxMap!.style.getSource(
+          _userLocationSourceId,
+        );
+        if (newSourceObj != null) {
+          final source = newSourceObj as GeoJsonSource;
+          source.updateGeoJSON(geoJsonString);
+        }
+      }
+
+      // Update direction arrow
+      _updateDirectionArrow(location);
+
+      // Move camera if in following mode
+      if (_isFollowingUser) {
+        _goToCurrentLocationWithBearing();
       }
     } catch (e) {
-      log('Error updating user location on map: $e');
+      print('Error updating user location on map: $e');
     }
   }
 
-  Future<void> addCustomMarkerOnMap(double latitude, double longitude) async {
+  void _updateDirectionArrow(LocationModel location) async {
+    if (!_layersInitialized || _mapboxMap == null || !_arrowAdded) return;
+
     try {
-      if (_mapboxMap == null) return;
-
-      log('Adding custom marker at: $latitude, $longitude');
-
-      if (!_customLocationAdded) {
-        await _mapboxMap!.style.addSource(
-          GeoJsonSource(
-            id: _customLocationSourceId,
-            data: '{"type":"FeatureCollection","features":[]}',
-          ),
-        );
-
-        await _mapboxMap!.style.addLayer(
-          CircleLayer(
-            id: "${_customLocationLayerId}_outer",
-            sourceId: _customLocationSourceId,
-            circleRadius: 15.0,
-            circleColor: 0x44FF0000,
-            circleStrokeWidth: 2.0,
-            circleStrokeColor: 0xFFFFFFFF,
-          ),
-        );
-
-        await _mapboxMap!.style.addLayer(
-          CircleLayer(
-            id: _customLocationLayerId,
-            sourceId: _customLocationSourceId,
-            circleRadius: 8.0,
-            circleColor: 0xFFFF0000,
-            circleStrokeWidth: 2.0,
-            circleStrokeColor: 0xFFFFFFFF,
-          ),
-        );
-
-        await _mapboxMap!.style.addLayer(
-          SymbolLayer(
-            id: "${_customLocationLayerId}_label",
-            sourceId: _customLocationSourceId,
-            textField: "{name}",
-            textSize: 12.0,
-            textOffset: [0, 2.0],
-            textAnchor: TextAnchor.TOP,
-            textColor: 0xFF000000,
-            textHaloColor: 0xFFFFFFFF,
-            textHaloWidth: 1.0,
-          ),
-        );
-
-        _customLocationAdded = true;
+      // In a real app, get the bearing from the compass sensor or calculate from locations
+      // For demo purposes, we'll use the calculated bearing or simulate movement
+      if (_previousLocation == null) {
+        // If no previous location, just use the current bearing or simulate
+        _userBearing = (_userBearing + 2) % 360;
       }
 
-      final Source? source = await _mapboxMap!.style.getSource(
-        _customLocationSourceId,
-      );
-      if (source is GeoJsonSource) {
-        final Map<String, dynamic> featureCollection = {
-          'type': 'FeatureCollection',
-          'features': [
-            {
-              'type': 'Feature',
-              'geometry': {
-                'type': 'Point',
-                'coordinates': [longitude, latitude],
-              },
-              'properties': {'name': 'Custom Location'},
+      // Update the direction arrow
+      final Map<String, dynamic> arrowFeatureCollection = {
+        'type': 'FeatureCollection',
+        'features': [
+          {
+            'type': 'Feature',
+            'geometry': {
+              'type': 'Point',
+              'coordinates': [location.longitude, location.latitude],
             },
-          ],
-        };
-        source.updateGeoJSON(jsonEncode(featureCollection));
+            'properties': {
+              'bearing': _userBearing, // Arrow direction
+            },
+          },
+        ],
+      };
+
+      final String arrowGeoJsonString = jsonEncode(arrowFeatureCollection);
+
+      final arrowSourceObj = await _mapboxMap!.style.getSource(
+        _directionArrowSourceId,
+      );
+      if (arrowSourceObj != null) {
+        final arrowSource = arrowSourceObj as GeoJsonSource;
+        arrowSource.updateGeoJSON(arrowGeoJsonString);
       }
-
-      _mapboxMap!.flyTo(
-        CameraOptions(
-          center: Point(
-            coordinates: Position(longitude.toDouble(), latitude.toDouble()),
-          ),
-          zoom: 15.0,
-        ),
-        MapAnimationOptions(duration: 1000),
-      );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Custom marker added successfully')),
-      );
     } catch (e) {
-      log('Error adding custom marker: $e');
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error adding marker: $e')));
+      print('Error updating direction arrow: $e');
     }
   }
 
-  void _updateDestinationOnMap(double latitude, double longitude, String name) {
+  void _updateDestinationOnMap(
+    double latitude,
+    double longitude,
+    String name,
+  ) async {
     try {
       if (!_layersInitialized || _mapboxMap == null) return;
 
-      log('Updating destination: $latitude, $longitude, $name');
+      print('Updating destination: $latitude, $longitude, $name');
 
       final Map<String, dynamic> featureCollection = {
         'type': 'FeatureCollection',
@@ -509,26 +658,41 @@ class _CustomMapState extends State<CustomMap> {
       };
 
       final String geoJsonString = jsonEncode(featureCollection);
-      final GeoJsonSource? source =
-          _mapboxMap!.style.getSource(_destinationSourceId) as GeoJsonSource?;
-      if (source != null) {
+
+      // Get the source asynchronously
+      final sourceObj = await _mapboxMap!.style.getSource(_destinationSourceId);
+
+      if (sourceObj != null) {
+        // Cast after unwrapping the Future
+        final source = sourceObj as GeoJsonSource;
         source.updateGeoJSON(geoJsonString);
       } else {
-        log('Destination source not found');
+        print('Destination source not found - reinitializing layers');
+        _layersInitialized = false;
+        await _initializeMapLayers();
+
+        // Try updating the destination again after reinitializing
+        final newSourceObj = await _mapboxMap!.style.getSource(
+          _destinationSourceId,
+        );
+        if (newSourceObj != null) {
+          final source = newSourceObj as GeoJsonSource;
+          source.updateGeoJSON(geoJsonString);
+        }
       }
     } catch (e) {
-      log('Error updating destination on map: $e');
+      print('Error updating destination on map: $e');
     }
   }
 
-  void _updateRouteOnMap(RouteModel route) {
+  void _updateRouteOnMap(RouteModel route) async {
     try {
       if (!_layersInitialized || _mapboxMap == null) return;
 
-      log('Updating route - points count: ${route.geometry.length}');
+      print('Updating route - points count: ${route.geometry.length}');
 
       if (route.geometry.isEmpty) {
-        log('Warning: Route is empty!');
+        print('Warning: Route is empty!');
         return;
       }
 
@@ -544,16 +708,30 @@ class _CustomMapState extends State<CustomMap> {
       };
 
       final String geoJsonString = jsonEncode(featureCollection);
-      final GeoJsonSource? source =
-          _mapboxMap!.style.getSource(_routeSourceId) as GeoJsonSource?;
-      if (source != null) {
+
+      // Get the source asynchronously
+      final sourceObj = await _mapboxMap!.style.getSource(_routeSourceId);
+
+      if (sourceObj != null) {
+        // Cast after unwrapping the Future
+        final source = sourceObj as GeoJsonSource;
         source.updateGeoJSON(geoJsonString);
         _fitRouteInView(route.geometry);
       } else {
-        log('Route source not found');
+        print('Route source not found - reinitializing layers');
+        _layersInitialized = false;
+        await _initializeMapLayers();
+
+        // Try updating the route again after reinitializing
+        final newSourceObj = await _mapboxMap!.style.getSource(_routeSourceId);
+        if (newSourceObj != null) {
+          final source = newSourceObj as GeoJsonSource;
+          source.updateGeoJSON(geoJsonString);
+          _fitRouteInView(route.geometry);
+        }
       }
     } catch (e) {
-      log('Error updating route on map: $e');
+      print('Error updating route on map: $e');
     }
   }
 
@@ -573,6 +751,7 @@ class _CustomMapState extends State<CustomMap> {
         maxLng = maxLng < lng ? lng : maxLng;
       }
 
+      // Add padding to the bounding box
       final latDelta = (maxLat - minLat) * 0.2;
       final lngDelta = (maxLng - minLng) * 0.2;
 
@@ -585,7 +764,7 @@ class _CustomMapState extends State<CustomMap> {
 
       if (!_isValidCoordinate(southwest.coordinates) ||
           !_isValidCoordinate(northeast.coordinates)) {
-        log('Invalid coordinates for fitting map');
+        print('Invalid coordinates for fitting map');
         return;
       }
 
@@ -608,9 +787,9 @@ class _CustomMapState extends State<CustomMap> {
             _mapboxMap!.flyTo(camera, MapAnimationOptions(duration: 1000));
           });
 
-      log('Map zoom adjusted for route');
+      print('Map zoom adjusted for route');
     } catch (e) {
-      log('Error adjusting map zoom: $e');
+      print('Error adjusting map zoom: $e');
     }
   }
 
@@ -621,25 +800,30 @@ class _CustomMapState extends State<CustomMap> {
         position.lng <= 180;
   }
 
-  void _clearRouteFromMap() {
+  void _clearRouteFromMap() async {
     try {
       if (!_layersInitialized || _mapboxMap == null) return;
 
-      final GeoJsonSource? routeSource =
-          _mapboxMap!.style.getSource(_routeSourceId) as GeoJsonSource?;
-      if (routeSource != null) {
+      print('Clearing route from map');
+
+      // Get sources asynchronously
+      final routeSourceObj = await _mapboxMap!.style.getSource(_routeSourceId);
+      if (routeSourceObj != null) {
+        final routeSource = routeSourceObj as GeoJsonSource;
         routeSource.updateGeoJSON(_createEmptyLineFeatureCollection());
       }
 
-      final GeoJsonSource? destinationSource =
-          _mapboxMap!.style.getSource(_destinationSourceId) as GeoJsonSource?;
-      if (destinationSource != null) {
+      final destinationSourceObj = await _mapboxMap!.style.getSource(
+        _destinationSourceId,
+      );
+      if (destinationSourceObj != null) {
+        final destinationSource = destinationSourceObj as GeoJsonSource;
         destinationSource.updateGeoJSON(_createEmptyPointFeatureCollection());
       }
 
-      log('Route cleared from map');
+      print('Route cleared from map');
     } catch (e) {
-      log('Error clearing route from map: $e');
+      print('Error clearing route from map: $e');
     }
   }
 
@@ -659,11 +843,70 @@ class _CustomMapState extends State<CustomMap> {
         ),
         MapAnimationOptions(duration: 1000),
       );
-      log('Moved to current location');
+      print('Moved to current location');
     } else {
       _locationController.updateCurrentLocation();
-      log('Attempting to update current location');
+      print('Attempting to update current location');
     }
+  }
+
+  // Toggle between follow mode and normal mode
+  void _toggleFollowMode() {
+    setState(() {
+      _isFollowingUser = !_isFollowingUser;
+      if (_isFollowingUser) {
+        _goToCurrentLocationWithBearing();
+      }
+    });
+  }
+
+  // Move to current location with camera bearing aligned to user direction
+  void _goToCurrentLocationWithBearing() {
+    if (_locationController.currentLocation != null && _mapboxMap != null) {
+      _mapboxMap!.flyTo(
+        CameraOptions(
+          center: Point(
+            coordinates: Position(
+              _locationController.currentLocation!.longitude,
+              _locationController.currentLocation!.latitude,
+            ),
+          ),
+          zoom: 18.0, // More zoom for close-up view
+          bearing: _userBearing, // Rotate camera to match user direction
+          pitch: 60.0, // Tilt camera for 3D-like view
+        ),
+        MapAnimationOptions(duration: 1000),
+      );
+      print('Moved to current location with bearing: $_userBearing');
+    } else {
+      _locationController.updateCurrentLocation();
+      print('Attempting to update current location for bearing view');
+    }
+  }
+
+  // Calculate bearing between two points
+  // Calculate bearing between two points
+  double _calculateBearing(
+    double startLat,
+    double startLng,
+    double endLat,
+    double endLng,
+  ) {
+    double latitude1 = startLat * (pi / 180.0);
+    double longitude1 = startLng * (pi / 180.0);
+    double latitude2 = endLat * (pi / 180.0);
+    double longitude2 = endLng * (pi / 180.0);
+
+    double y = sin(longitude2 - longitude1) * cos(latitude2);
+    double x =
+        cos(latitude1) * sin(latitude2) -
+        sin(latitude1) * cos(latitude2) * cos(longitude2 - longitude1);
+
+    double bearing = atan2(y, x);
+    bearing = bearing * (180.0 / pi);
+    bearing = (bearing + 360) % 360;
+
+    return bearing;
   }
 
   void _updateMapStyle() {
@@ -676,8 +919,9 @@ class _CustomMapState extends State<CustomMap> {
 
     _mapboxMap!.style.setStyleURI(mapStyle);
     _layersInitialized = false;
-    _customLocationAdded = false;
-    log('Map style updated: $mapStyle');
+    customLocationAdded = false;
+    _arrowAdded = false;
+    print('Map style updated: $mapStyle');
   }
 
   String _createEmptyPointFeatureCollection() {
