@@ -1,13 +1,14 @@
+// ignore_for_file: unused_element
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../widgets/custom_map.dart';
-import '../widgets/navigation_info.dart';
-import '../widgets/navigation_steps_list.dart';
-import '../widgets/turn_by_turn_directions.dart';
-import '../widgets/voice_button.dart';
 import '../../controllers/navigation_controller.dart';
 import '../../controllers/speech_controller.dart';
 import '../../models/place_model.dart';
+import '../widgets/navigation_bottom_panel.dart';
+import '../widgets/navigation_steps_list.dart';
+import '../widgets/turn_by_turn_directions.dart';
 
 class NavigationScreen extends StatefulWidget {
   final PlaceModel destination;
@@ -19,7 +20,7 @@ class NavigationScreen extends StatefulWidget {
 }
 
 class _NavigationScreenState extends State<NavigationScreen> {
-  bool _showStepsList = false; // متغير لعرض/إخفاء قائمة الخطوات
+  bool _showStepsList = false; // Variable to show/hide steps list
 
   @override
   Widget build(BuildContext context) {
@@ -28,62 +29,20 @@ class _NavigationScreenState extends State<NavigationScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // الخريطة
+          // Map
           const CustomMap(),
 
-          // واجهة خطوات التنقل في الجزء العلوي
+          // Turn-by-turn directions at the top
           if (navigationController.isNavigating &&
               navigationController.nextStep != null)
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              child: SafeArea(child: TurnByTurnDirections()),
+              child: TurnByTurnDirections(),
             ),
 
-          // شريط العنوان
-          Positioned(
-            top: navigationController.nextStep != null ? 170 : 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                color: Theme.of(
-                  context,
-                ).colorScheme.surface.withValues(alpha: .9),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      onPressed: _handleBackPress,
-                    ),
-                    Expanded(
-                      child: Text(
-                        'التنقل إلى ${widget.destination.placeName}',
-                        style: Theme.of(context).textTheme.titleMedium,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        navigationController.stopNavigation();
-                        Navigator.of(context).pop();
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // قائمة خطوات التنقل (تظهر عند النقر على زر عرض الخطوات)
+          // Navigation steps list (shown when tapping the show steps button)
           if (_showStepsList)
             Positioned(
               top: 100,
@@ -98,12 +57,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
             ),
 
-          // معلومات التنقل
+          // Bottom navigation panel
           Positioned(
-            bottom: 80,
+            bottom: 16,
             left: 16,
             right: 16,
-            child: NavigationInfo(
+            child: NavigationBottomPanel(
               onClose: () {
                 navigationController.stopNavigation();
                 Navigator.of(context).pop();
@@ -111,9 +70,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           ),
 
-          // زر عرض قائمة الخطوات
+          // Show steps list button
           Positioned(
-            bottom: 160,
+            bottom: 260,
             right: 16,
             child: FloatingActionButton(
               heroTag: 'btn_show_steps',
@@ -131,15 +90,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           ),
 
-          // زر الأوامر الصوتية
-          Positioned(
-            bottom: 16,
-            left: 0,
-            right: 0,
-            child: Center(child: VoiceButton(onCommand: _handleVoiceCommand)),
-          ),
-
-          // مؤشر جاري التحميل
+          // Loading indicator
           if (navigationController.isLoading)
             Container(
               color: Colors.black.withValues(alpha: .2),
@@ -150,7 +101,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
-  // معالجة الضغط على زر العودة
+  // Handle back button press
   void _handleBackPress() {
     final navigationController = Provider.of<NavigationController>(
       context,
@@ -172,9 +123,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  Navigator.pop(context); // إغلاق الحوار
+                  Navigator.pop(context); // Close dialog
                   navigationController.stopNavigation();
-                  Navigator.of(context).pop(); // العودة إلى الشاشة السابقة
+                  Navigator.of(context).pop(); // Return to previous screen
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error,
@@ -187,7 +138,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
-  // معالجة الأوامر الصوتية
+  // Handle voice commands
   void _handleVoiceCommand(String command) {
     final navigationController = Provider.of<NavigationController>(
       context,
@@ -199,7 +150,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
 
     if (speechController.isStopNavigationCommand()) {
-      // إيقاف التنقل والعودة إلى الشاشة الرئيسية
+      // Stop navigation and return to home screen
       navigationController.stopNavigation();
       Navigator.of(context).pop();
 
@@ -209,7 +160,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     } else if (speechController.isShowTimeCommand() ||
         speechController.isShowDistanceCommand() ||
         speechController.isShowETACommand()) {
-      // عرض معلومات التنقل
+      // Show navigation info
       String info = navigationController.getNavigationInfo();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(info)));
     }

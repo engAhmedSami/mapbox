@@ -48,12 +48,11 @@ class TurnByTurnDirections extends StatelessWidget {
         ],
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         children: [
+          SizedBox(height: 16),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // أيقونة الاتجاه
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -139,7 +138,6 @@ class TurnByTurnDirections extends StatelessWidget {
                   // المسافة المتبقية
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'المسافة المتبقية',
@@ -166,7 +164,6 @@ class TurnByTurnDirections extends StatelessWidget {
                   // وقت الوصول المقدر
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'وقت الوصول',
@@ -192,9 +189,7 @@ class TurnByTurnDirections extends StatelessWidget {
 
                   // الوجهة
                   Expanded(
-                    flex: 2,
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'الوجهة',

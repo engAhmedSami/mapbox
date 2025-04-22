@@ -3,16 +3,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/location_model.dart';
+import '../../models/place_model.dart';
 import '../widgets/custom_map.dart';
-import '../widgets/search_bar.dart';
-import '../widgets/voice_button.dart';
-import '../widgets/navigation_info.dart';
-import '../widgets/turn_by_turn_directions.dart'; // إضافة استيراد لواجهة خطوات التنقل
 import '../../controllers/location_controller.dart';
 import '../../controllers/navigation_controller.dart';
 import '../../controllers/speech_controller.dart';
 import '../../controllers/storage_controller.dart';
-import '../../models/place_model.dart';
+import '../widgets/navigation_bottom_panel.dart';
+import '../widgets/search_bar.dart';
+import '../widgets/turn_by_turn_directions.dart';
+import '../widgets/voice_button.dart';
 import 'search_screen.dart';
 import 'navigation_screen.dart';
 
@@ -28,13 +28,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
 
-    // تهيئة المتحكمات عند بدء التطبيق
+    // Initialize controllers when app starts
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeControllers();
     });
   }
 
-  // تهيئة جميع المتحكمات
+  // Initialize all controllers
   Future<void> _initializeControllers() async {
     final locationController = Provider.of<LocationController>(
       context,
@@ -49,15 +49,15 @@ class _HomeScreenState extends State<HomeScreen> {
       listen: false,
     );
 
-    // تهيئة المتحكمات بالترتيب
+    // Initialize controllers in order
     await storageController.initialize();
     await locationController.initialize();
     await speechController.initialize();
 
-    // بدء تتبع الموقع
+    // Start location tracking
     locationController.startLocationTracking();
 
-    // تهيئة متحكم التنقل بعد الحصول على الموقع الحالي
+    // Initialize navigation controller after getting current location
     if (locationController.currentLocation != null) {
       final navigationController = Provider.of<NavigationController>(
         context,
@@ -69,7 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // معالجة الأوامر الصوتية
+  // Handle voice commands
   void _handleVoiceCommand(String command) {
     final navigationController = Provider.of<NavigationController>(
       context,
@@ -81,18 +81,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     Provider.of<StorageController>(context, listen: false);
 
-    // التصرف بناءً على نوع الأمر
+    // Act based on command type
     if (command.startsWith('ابحث عن')) {
-      // استخراج نص البحث
+      // Extract search text
       String? searchQuery = speechController.extractSearchQuery();
       if (searchQuery != null && searchQuery.isNotEmpty) {
         _navigateToSearchScreen(initialQuery: searchQuery);
       }
     } else if (speechController.isStartNavigationCommand()) {
-      // الانتقال إلى شاشة البحث لاختيار وجهة
+      // Go to search screen to choose destination
       _navigateToSearchScreen();
     } else if (speechController.isStopNavigationCommand()) {
-      // إيقاف التنقل الحالي
+      // Stop current navigation
       if (navigationController.isNavigating) {
         navigationController.stopNavigation();
         ScaffoldMessenger.of(
@@ -102,7 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (speechController.isShowTimeCommand() ||
         speechController.isShowDistanceCommand() ||
         speechController.isShowETACommand()) {
-      // عرض معلومات التنقل الحالية
+      // Show current navigation info
       if (navigationController.isNavigating) {
         String info = navigationController.getNavigationInfo();
         ScaffoldMessenger.of(
@@ -116,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // الانتقال إلى شاشة البحث
+  // Navigate to search screen
   void _navigateToSearchScreen({String? initialQuery}) {
     Navigator.push(
       context,
@@ -130,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // معالجة اختيار مكان
+  // Handle place selection
   void _handlePlaceSelection(PlaceModel place) async {
     final locationController = Provider.of<LocationController>(
       context,
@@ -145,10 +145,10 @@ class _HomeScreenState extends State<HomeScreen> {
       listen: false,
     );
 
-    // الحصول على الموقع الحالي
+    // Get current location
     LocationModel? currentLocation = locationController.currentLocation;
     if (currentLocation == null) {
-      // محاولة تحديث الموقع إذا كان فارغًا
+      // Try to update location if empty
       await locationController.updateCurrentLocation();
       currentLocation = locationController.currentLocation;
 
@@ -160,21 +160,21 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // بدء التنقل
+    // Start navigation
     bool success = await navigationController.startNavigation(
       place,
       currentLocation,
     );
 
     if (success) {
-      // حفظ المكان في البحث الأخير
+      // Save place in recent searches
       await storageController.saveRecentSearch(place);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('بدء التنقل إلى ${place.placeName}')),
       );
 
-      // الانتقال إلى شاشة التنقل
+      // Navigate to navigation screen
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -182,7 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     } else {
-      // عرض رسالة خطأ
+      // Show error message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -194,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // مسح الكاش
+  // Clear cache
   void _clearCache() {
     final storageController = Provider.of<StorageController>(
       context,
@@ -250,55 +250,51 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // الخريطة الأساسية
+          // Base map
           const CustomMap(),
 
-          // واجهة خطوات التنقل في الجزء العلوي
+          // Turn-by-turn directions at the top
           if (navigationController.isNavigating &&
               navigationController.nextStep != null)
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              child: SafeArea(child: TurnByTurnDirections()),
+              child: TurnByTurnDirections(),
             ),
 
-          // البحث في الجزء العلوي
+          // Search at the top
           Positioned(
             top:
                 navigationController.isNavigating &&
                         navigationController.nextStep != null
-                    ? 170 // ضبط المسافة عند ظهور واجهة خطوات التنقل
+                    ? 170 // Adjust distance when turn-by-turn UI is shown
                     : MediaQuery.of(context).padding.top + 16,
             left: 16,
             right: 16,
             child: SafeArea(
-              child: Column(
-                children: [
-                  // شريط البحث
-                  CustomSearchBar(
-                    onPlaceSelected: (place) {
-                      _handlePlaceSelection(place);
-                    },
-                  ),
-
-                  // بيانات التنقل الحالية (تظهر فقط أثناء التنقل وعندما لا تظهر واجهة خطوات التنقل)
-                  if (navigationController.isNavigating &&
-                      navigationController.nextStep == null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: NavigationInfo(
-                        onClose: () {
-                          navigationController.stopNavigation();
-                        },
-                      ),
-                    ),
-                ],
+              child: CustomSearchBar(
+                onPlaceSelected: (place) {
+                  _handlePlaceSelection(place);
+                },
               ),
             ),
           ),
 
-          // زر الأوامر الصوتية
+          // Bottom navigation panel (only during navigation)
+          if (navigationController.isNavigating)
+            Positioned(
+              bottom: MediaQuery.of(context).padding.bottom + 80,
+              left: 16,
+              right: 16,
+              child: NavigationBottomPanel(
+                onClose: () {
+                  navigationController.stopNavigation();
+                },
+              ),
+            ),
+
+          // Voice command button
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 16,
             left: 0,
@@ -306,7 +302,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Center(child: VoiceButton(onCommand: _handleVoiceCommand)),
           ),
 
-          // زر المفضلة والبحث الأخير
+          // Favorites and recent search button
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 16,
             left: 16,
@@ -320,12 +316,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // زر مسح الكاش
+          // Clear cache button
           Positioned(
             top:
                 navigationController.isNavigating &&
                         navigationController.nextStep != null
-                    ? 186 // ضبط المسافة عند ظهور واجهة خطوات التنقل
+                    ? 186 // Adjust distance when turn-by-turn UI is shown
                     : MediaQuery.of(context).padding.top + 16,
             left: 16,
             child: Visibility(
@@ -343,7 +339,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // مؤشر جاري التحميل
+          // Loading indicator
           if (locationController.isLoading ||
               navigationController.isLoading ||
               storageController.isLoading)
