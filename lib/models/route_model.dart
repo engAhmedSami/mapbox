@@ -1,3 +1,7 @@
+// لا تنس إضافة هذا الاستيراد في أعلى الملف
+import 'dart:math';
+import 'route_step_model.dart';
+
 class RouteModel {
   final List<List<double>> geometry;
   final double distance; // بالأمتار
@@ -5,6 +9,8 @@ class RouteModel {
   final String startAddress;
   final String endAddress;
   final DateTime? estimatedArrivalTime;
+  final List<RouteStepModel> steps; // قائمة خطوات الرحلة
+  final RouteStepModel? nextStep; // الخطوة التالية للتنقل
 
   RouteModel({
     required this.geometry,
@@ -13,6 +19,8 @@ class RouteModel {
     required this.startAddress,
     required this.endAddress,
     this.estimatedArrivalTime,
+    this.steps = const [],
+    this.nextStep,
   });
 
   factory RouteModel.fromMapboxJson(
@@ -22,6 +30,8 @@ class RouteModel {
   ) {
     // استخراج المسار الهندسي (الإحداثيات)
     List<List<double>> decodedGeometry = [];
+    List<RouteStepModel> routeSteps = [];
+    RouteStepModel? nextRouteStep;
 
     if (json['routes'] != null && json['routes'].isNotEmpty) {
       final route = json['routes'][0];
@@ -35,6 +45,23 @@ class RouteModel {
       double distance = route['distance']?.toDouble() ?? 0.0;
       double duration = route['duration']?.toDouble() ?? 0.0;
 
+      // استخراج خطوات الرحلة
+      if (route['legs'] != null && route['legs'].isNotEmpty) {
+        final leg = route['legs'][0]; // نأخذ أول قسم من الرحلة
+
+        if (leg['steps'] != null) {
+          routeSteps =
+              (leg['steps'] as List)
+                  .map((step) => RouteStepModel.fromJson(step))
+                  .toList();
+
+          // تحديد الخطوة التالية (أول خطوة في القائمة)
+          if (routeSteps.isNotEmpty) {
+            nextRouteStep = routeSteps[0];
+          }
+        }
+      }
+
       // حساب وقت الوصول المقدر
       DateTime now = DateTime.now();
       DateTime estimatedArrival = now.add(Duration(seconds: duration.round()));
@@ -46,6 +73,8 @@ class RouteModel {
         startAddress: startAddress,
         endAddress: endAddress,
         estimatedArrivalTime: estimatedArrival,
+        steps: routeSteps,
+        nextStep: nextRouteStep,
       );
     }
 
@@ -56,6 +85,7 @@ class RouteModel {
       duration: 0.0,
       startAddress: startAddress,
       endAddress: endAddress,
+      steps: routeSteps,
     );
   }
 
@@ -101,7 +131,71 @@ class RouteModel {
       'startAddress': startAddress,
       'endAddress': endAddress,
       'estimatedArrivalTime': estimatedArrivalTime?.toIso8601String(),
+      'steps': steps.map((step) => step.toString()).toList(),
     };
+  }
+
+  // تحديث الخطوة التالية بناءً على الموقع الحالي
+  RouteModel updateNextStep(double currentLat, double currentLng) {
+    if (steps.isEmpty) {
+      return this;
+    }
+
+    // حساب المسافة للخطوات وتحديد الخطوة التالية
+    double minDistance = double.infinity;
+    int nextStepIndex = 0;
+
+    for (int i = 0; i < steps.length; i++) {
+      if (steps[i].location.length < 2) continue;
+
+      // حساب المسافة إلى موقع المناورة
+      double stepLng = steps[i].location[0];
+      double stepLat = steps[i].location[1];
+
+      double distance = _calculateDistance(
+        currentLat,
+        currentLng,
+        stepLat,
+        stepLng,
+      );
+
+      // إذا كانت هذه المناورة هي الأقرب التي لم نتجاوزها بعد
+      if (distance < minDistance && distance > 50) {
+        // نحدد أننا لم نتجاوز المناورة إذا كانت المسافة > 50 متر
+        minDistance = distance;
+        nextStepIndex = i;
+      }
+    }
+
+    // إنشاء نسخة جديدة من RouteModel مع تحديث nextStep
+    return RouteModel(
+      geometry: geometry,
+      distance: distance,
+      duration: duration,
+      startAddress: startAddress,
+      endAddress: endAddress,
+      estimatedArrivalTime: estimatedArrivalTime,
+      steps: steps,
+      nextStep: steps[nextStepIndex],
+    );
+  }
+
+  // حساب المسافة بين نقطتين باستخدام صيغة هافرساين
+  static double _calculateDistance(
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
+    // تحويل الدرجات إلى راديان
+    double p = 0.017453292519943295; // Pi/180
+    double a =
+        0.5 -
+        0.5 * cos((lat2 - lat1) * p) +
+        cos(lat1 * p) * cos(lat2 * p) * (1 - cos((lon2 - lon1) * p)) * 0.5;
+    return 12742 *
+        1000 *
+        asin(sqrt(a)); // 2 * R * asin(sqrt(a)) حيث R = 6371 كم
   }
 
   // إنشاء نموذج من JSON
@@ -125,6 +219,7 @@ class RouteModel {
           json['estimatedArrivalTime'] != null
               ? DateTime.parse(json['estimatedArrivalTime'])
               : null,
+      steps: [], // يمكن إضافة استخراج الخطوات من JSON إذا لزم الأمر
     );
   }
 

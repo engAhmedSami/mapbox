@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../widgets/custom_map.dart';
 import '../widgets/navigation_info.dart';
+import '../widgets/navigation_steps_list.dart';
+import '../widgets/turn_by_turn_directions.dart';
 import '../widgets/voice_button.dart';
 import '../../controllers/navigation_controller.dart';
 import '../../controllers/speech_controller.dart';
@@ -17,6 +19,8 @@ class NavigationScreen extends StatefulWidget {
 }
 
 class _NavigationScreenState extends State<NavigationScreen> {
+  bool _showStepsList = false; // متغير لعرض/إخفاء قائمة الخطوات
+
   @override
   Widget build(BuildContext context) {
     final navigationController = Provider.of<NavigationController>(context);
@@ -27,9 +31,19 @@ class _NavigationScreenState extends State<NavigationScreen> {
           // الخريطة
           const CustomMap(),
 
+          // واجهة خطوات التنقل في الجزء العلوي
+          if (navigationController.isNavigating &&
+              navigationController.nextStep != null)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(child: TurnByTurnDirections()),
+            ),
+
           // شريط العنوان
           Positioned(
-            top: 0,
+            top: navigationController.nextStep != null ? 170 : 0,
             left: 0,
             right: 0,
             child: SafeArea(
@@ -69,6 +83,21 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           ),
 
+          // قائمة خطوات التنقل (تظهر عند النقر على زر عرض الخطوات)
+          if (_showStepsList)
+            Positioned(
+              top: 100,
+              left: 20,
+              right: 20,
+              child: NavigationStepsList(
+                onClose: () {
+                  setState(() {
+                    _showStepsList = false;
+                  });
+                },
+              ),
+            ),
+
           // معلومات التنقل
           Positioned(
             bottom: 80,
@@ -79,6 +108,26 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 navigationController.stopNavigation();
                 Navigator.of(context).pop();
               },
+            ),
+          ),
+
+          // زر عرض قائمة الخطوات
+          Positioned(
+            bottom: 160,
+            right: 16,
+            child: FloatingActionButton(
+              heroTag: 'btn_show_steps',
+              mini: true,
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              onPressed: () {
+                setState(() {
+                  _showStepsList = !_showStepsList;
+                });
+              },
+              child: Icon(
+                _showStepsList ? Icons.close : Icons.list_alt,
+                color: Theme.of(context).colorScheme.primary,
+              ),
             ),
           ),
 

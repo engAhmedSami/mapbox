@@ -7,12 +7,14 @@ import '../widgets/custom_map.dart';
 import '../widgets/search_bar.dart';
 import '../widgets/voice_button.dart';
 import '../widgets/navigation_info.dart';
+import '../widgets/turn_by_turn_directions.dart'; // إضافة استيراد لواجهة خطوات التنقل
 import '../../controllers/location_controller.dart';
 import '../../controllers/navigation_controller.dart';
 import '../../controllers/speech_controller.dart';
 import '../../controllers/storage_controller.dart';
 import '../../models/place_model.dart';
 import 'search_screen.dart';
+import 'navigation_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -171,6 +173,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('بدء التنقل إلى ${place.placeName}')),
       );
+
+      // الانتقال إلى شاشة التنقل
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => NavigationScreen(destination: place),
+        ),
+      );
     } else {
       // عرض رسالة خطأ
       ScaffoldMessenger.of(context).showSnackBar(
@@ -243,9 +253,23 @@ class _HomeScreenState extends State<HomeScreen> {
           // الخريطة الأساسية
           const CustomMap(),
 
+          // واجهة خطوات التنقل في الجزء العلوي
+          if (navigationController.isNavigating &&
+              navigationController.nextStep != null)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(child: TurnByTurnDirections()),
+            ),
+
           // البحث في الجزء العلوي
           Positioned(
-            top: MediaQuery.of(context).padding.top + 16,
+            top:
+                navigationController.isNavigating &&
+                        navigationController.nextStep != null
+                    ? 170 // ضبط المسافة عند ظهور واجهة خطوات التنقل
+                    : MediaQuery.of(context).padding.top + 16,
             left: 16,
             right: 16,
             child: SafeArea(
@@ -258,8 +282,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
 
-                  // بيانات التنقل الحالية (تظهر فقط أثناء التنقل)
-                  if (navigationController.isNavigating)
+                  // بيانات التنقل الحالية (تظهر فقط أثناء التنقل وعندما لا تظهر واجهة خطوات التنقل)
+                  if (navigationController.isNavigating &&
+                      navigationController.nextStep == null)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: NavigationInfo(
@@ -297,7 +322,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
           // زر مسح الكاش
           Positioned(
-            top: MediaQuery.of(context).padding.top + 16,
+            top:
+                navigationController.isNavigating &&
+                        navigationController.nextStep != null
+                    ? 186 // ضبط المسافة عند ظهور واجهة خطوات التنقل
+                    : MediaQuery.of(context).padding.top + 16,
             left: 16,
             child: Visibility(
               visible:

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import '../config/app_constants.dart';
 import '../models/route_model.dart';
 import '../models/place_model.dart';
+import '../models/route_step_model.dart';
 
 class MapboxService {
   // البحث عن أماكن بالاسم
@@ -50,9 +51,10 @@ class MapboxService {
     String endAddress,
   ) async {
     try {
+      // تعديل طلب API ليشمل تفاصيل خطوات الرحلة
       final response = await http.get(
         Uri.parse(
-          '${AppConstants.mapboxDirectionsUrl}/$startLng,$startLat;$endLng,$endLat?geometries=polyline&access_token=${AppConstants.mapboxAccessToken}&overview=full&steps=true&language=ar',
+          '${AppConstants.mapboxDirectionsUrl}/$startLng,$startLat;$endLng,$endLat?geometries=polyline&access_token=${AppConstants.mapboxAccessToken}&overview=full&steps=true&language=ar&alternatives=false&annotations=duration,distance,speed',
         ),
       );
 
@@ -60,6 +62,8 @@ class MapboxService {
         final Map<String, dynamic> data = json.decode(response.body);
         return RouteModel.fromMapboxJson(data, startAddress, endAddress);
       } else {
+        log('فشل في الحصول على المسار: ${response.statusCode}');
+        log('استجابة API: ${response.body}');
         throw Exception('فشل في الحصول على المسار: ${response.statusCode}');
       }
     } catch (e) {
@@ -93,6 +97,34 @@ class MapboxService {
     } catch (e) {
       log('خطأ في حساب وقت الوصول المقدر: $e');
       return null;
+    }
+  }
+
+  // الحصول على خطوات الرحلة
+  Future<List<RouteStepModel>> getRouteSteps(
+    double startLat,
+    double startLng,
+    double endLat,
+    double endLng,
+  ) async {
+    try {
+      final route = await getRoute(
+        startLat,
+        startLng,
+        endLat,
+        endLng,
+        'موقعك الحالي',
+        'الوجهة',
+      );
+
+      if (route != null) {
+        return route.steps;
+      }
+
+      return [];
+    } catch (e) {
+      log('خطأ في الحصول على خطوات الرحلة: $e');
+      return [];
     }
   }
 }

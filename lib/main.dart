@@ -5,9 +5,9 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import 'config/app_constants.dart';
 import 'config/theme.dart';
+import 'controllers/navigation_controller.dart';
 import 'views/screens/home_screen.dart';
 import 'controllers/location_controller.dart';
-import 'controllers/navigation_controller.dart';
 import 'controllers/speech_controller.dart';
 import 'controllers/storage_controller.dart';
 
