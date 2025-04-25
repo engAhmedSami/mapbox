@@ -491,6 +491,8 @@
 //   IconData _getCategoryIcon() {
 //     final name = widget.place.placeName.toLowerCase();
 
+// ignore_for_file: unused_local_variable, avoid_print
+
 //     if (name.contains('جامعة') ||
 //         name.contains('كلية') ||
 //         name.contains('مدرسة')) {
@@ -573,6 +575,7 @@ class _PlaceDetailsWidgetState extends State<PlaceDetailsWidget> {
 
       // حساب المسافة من الموقع الحالي
       final locationController = Provider.of<LocationController>(
+        // ignore: use_build_context_synchronously
         context,
         listen: false,
       );
@@ -616,7 +619,7 @@ class _PlaceDetailsWidgetState extends State<PlaceDetailsWidget> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: .1),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -631,7 +634,9 @@ class _PlaceDetailsWidgetState extends State<PlaceDetailsWidget> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               CircleAvatar(
-                backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+                backgroundColor: theme.colorScheme.primary.withValues(
+                  alpha: .1,
+                ),
                 radius: 24,
                 child: Icon(
                   _getCategoryIcon(),
@@ -808,6 +813,7 @@ class _PlaceDetailsWidgetState extends State<PlaceDetailsWidget> {
       });
 
       // إظهار رسالة للمستخدم
+      // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -819,6 +825,7 @@ class _PlaceDetailsWidgetState extends State<PlaceDetailsWidget> {
         ),
       );
     } catch (e) {
+      // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
       );
@@ -928,7 +935,7 @@ class _PlaceDetailsWidgetState extends State<PlaceDetailsWidget> {
 
   // محتوى للمؤسسات التعليمية مثل الكليات والمدارس
   Widget _buildEducationalContent() {
-    final theme = Theme.of(context);
+    Theme.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1203,7 +1210,7 @@ class _PlaceDetailsWidgetState extends State<PlaceDetailsWidget> {
                 Text(
                   title,
                   style: TextStyle(
-                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                    color: theme.colorScheme.onSurface.withValues(alpha: .6),
                     fontSize: 12,
                   ),
                 ),

@@ -3999,6 +3999,8 @@
 //     return '{"type":"FeatureCollection","features":[]}';
 //   }
 
+// ignore_for_file: avoid_print
+
 //   @override
 //   void dispose() {
 //     _cameraUpdateTimer?.cancel();
@@ -4075,7 +4077,7 @@ class _CustomMapState extends State<CustomMap> {
   final String _placesSymbolLayerId = 'places-symbol-layer';
   final String _buildingsSourceId = 'buildings-source';
   final String buildingsLayerId = 'buildings-layer';
-  final String _buildingsExtrusionLayerId = 'buildings-extrusion-layer';
+  final String buildingsExtrusionLayerId = 'buildings-extrusion-layer';
   bool _placesAdded = false;
   bool _buildingsAdded = false;
 
@@ -5429,97 +5431,115 @@ class _CustomMapState extends State<CustomMap> {
     });
 
     if (_buildingsAdded) {
-      await _addBuildingsToMap();
+      // تغيير نمط الخريطة إلى نمط يدعم المباني ثلاثية الأبعاد (مثل Mapbox Streets)
+      await _mapboxMap!.style.setStyleURI("mapbox://styles/mapbox/streets-v12");
+
+      // انتظار تحميل النمط
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // إضافة طبقة المباني ثلاثية الأبعاد
+      await _add3DBuildingsLayer();
+
+      // ضبط الكاميرا بزاوية مناسبة للعرض ثلاثي الأبعاد
+      if (_locationController.currentLocation != null) {
+        _mapboxMap!.flyTo(
+          CameraOptions(
+            center: Point(
+              coordinates: Position(
+                _locationController.currentLocation!.longitude,
+                _locationController.currentLocation!.latitude,
+              ),
+            ),
+            zoom: 16.0, // تكبير مناسب لرؤية التفاصيل
+            pitch: 60.0, // زاوية ميل الكاميرا (أساسية للعرض ثلاثي الأبعاد)
+            bearing: 0.0, // اتجاه الكاميرا
+          ),
+          MapAnimationOptions(duration: 1000),
+        );
+      }
     } else {
-      await _removeBuildingsFromMap();
-    }
-  }
-
-  // إضافة طبقة المباني ثلاثية الأبعاد
-  Future<void> _addBuildingsToMap() async {
-    if (_mapboxMap == null) return;
-
-    try {
-      // التحقق مما إذا كانت طبقة المباني موجودة بالفعل
-      bool hasBuildingsSource = false;
-      try {
-        final source = await _mapboxMap!.style.getSource(_buildingsSourceId);
-        hasBuildingsSource = source != null;
-      } catch (e) {
-        hasBuildingsSource = false;
+      // العودة إلى النمط العادي
+      if (_storageController.isDarkMode) {
+        await _mapboxMap!.style.setStyleURI(AppConstants.nightMapStyle);
+      } else {
+        await _mapboxMap!.style.setStyleURI(AppConstants.outdoorsStyle);
       }
 
-      if (!hasBuildingsSource) {
-        // إضافة مصدر بيانات المباني
+      // العودة إلى العرض العادي
+      if (_locationController.currentLocation != null) {
+        _mapboxMap!.flyTo(
+          CameraOptions(
+            center: Point(
+              coordinates: Position(
+                _locationController.currentLocation!.longitude,
+                _locationController.currentLocation!.latitude,
+              ),
+            ),
+            zoom: 15.0,
+            pitch: 0.0, // بدون ميل
+            bearing: 0.0,
+          ),
+          MapAnimationOptions(duration: 1000),
+        );
+      }
+    }
+
+    // ignore: use_build_context_synchronously
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _buildingsAdded
+              ? 'تم تفعيل عرض المباني ثلاثية الأبعاد'
+              : 'تم إيقاف عرض المباني ثلاثية الأبعاد',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _add3DBuildingsLayer() async {
+    try {
+      // إضافة طبقة المباني ثلاثية الأبعاد
+      final layerProperties = {
+        "id": "3d-buildings",
+        "source": "composite",
+        "source-layer": "building",
+        "type": "fill-extrusion",
+        "minzoom": 15,
+        "paint": {
+          "fill-extrusion-color": "#aaa",
+          "fill-extrusion-height": ["get", "height"],
+          "fill-extrusion-base": ["get", "min_height"],
+          "fill-extrusion-opacity": 0.7,
+        },
+      };
+
+      await _mapboxMap!.style.addStyleLayer(layerProperties as String, null);
+      print('تم إضافة طبقة المباني ثلاثية الأبعاد بنجاح');
+    } catch (e) {
+      print('خطأ في إضافة طبقة المباني: $e');
+
+      // إذا فشلت الطريقة الأولى، نجرب طريقة أخرى
+      try {
         await _mapboxMap!.style.addSource(
           GeoJsonSource(
-            id: _buildingsSourceId,
+            id: "building-source",
             data: '{"type":"FeatureCollection","features":[]}',
           ),
         );
 
-        // إضافة طبقة المباني ثلاثية الأبعاد
         await _mapboxMap!.style.addLayer(
           FillExtrusionLayer(
-            id: _buildingsExtrusionLayerId,
-            sourceId: _buildingsSourceId,
-            fillExtrusionColor: 0xFFAFB4BA, // لون رمادي فاتح
+            id: "building-extrusions",
+            sourceId: "building-source",
+            fillExtrusionColor: 0xFFAAAAAA,
+            fillExtrusionHeight: 30,
             fillExtrusionOpacity: 0.7,
-            fillExtrusionHeight: 10, // ارتفاع المباني
-            fillExtrusionBase: 0,
           ),
         );
+      } catch (fallbackError) {
+        print('فشلت الطريقة البديلة أيضًا: $fallbackError');
       }
-
-      // تفعيل خاصية المباني ثلاثية الأبعاد في Mapbox
-      await _mapboxMap!.style.setStyleJSON(
-        """
-        {
-          "layers": [
-            {
-              "id": "3d-buildings",
-              "source": "composite",
-              "source-layer": "building",
-              "type": "fill-extrusion",
-              "minzoom": 15,
-              "paint": {
-                "fill-extrusion-color": "#aaa",
-                "fill-extrusion-height": ["get", "height"],
-                "fill-extrusion-base": ["get", "min_height"],
-                "fill-extrusion-opacity": 0.7
-              }
-            }
-          ]
-        }
-        """,
-        // دمج مع النمط الحالي
-      );
-
-      print('3D Buildings layer added to map');
-    } catch (e) {
-      print('Error adding buildings to map: $e');
-    }
-  }
-
-  // إزالة طبقة المباني
-  Future<void> _removeBuildingsFromMap() async {
-    if (_mapboxMap == null) return;
-
-    try {
-      // التحقق من وجود طبقة المباني
-      try {
-        await _mapboxMap!.style.removeStyleLayer(_buildingsExtrusionLayerId);
-        await _mapboxMap!.style.removeStyleSource(_buildingsSourceId);
-
-        // إزالة طبقة مباني Mapbox الافتراضية
-        await _mapboxMap!.style.removeStyleLayer("3d-buildings");
-      } catch (e) {
-        // قد لا توجد الطبقة، تجاهل الخطأ
-      }
-
-      print('3D Buildings layer removed from map');
-    } catch (e) {
-      print('Error removing buildings from map: $e');
     }
   }
 
@@ -5587,125 +5607,8 @@ class _CustomMapState extends State<CustomMap> {
   }
 
   // البحث عن المباني داخل مؤسسة معينة مثل الجامعة
-  Future<void> _searchBuildingsInPlace(PlaceModel place) async {
-    if (!_layersInitialized || _mapboxMap == null) return;
-
-    try {
-      // استخدام اسم المكان في البحث للحصول على المباني الداخلية
-      final buildings = await _mapboxService.searchPlaces(
-        '${place.placeName} مبنى',
-        nearLat: place.latitude,
-        nearLng: place.longitude,
-      );
-
-      // فلترة النتائج للتأكد من أنها مباني داخل المكان
-      final filteredBuildings =
-          buildings.where((building) {
-            final buildingName = building.placeName.toLowerCase();
-            final buildingAddress = building.address.toLowerCase();
-            final placeName = place.placeName.toLowerCase();
-
-            // تحقق من أن المبنى مرتبط بالمكان
-            return buildingName.contains(placeName) ||
-                buildingAddress.contains(placeName);
-          }).toList();
-
-      // إضافة المباني إلى الخريطة إذا تم العثور على أي منها
-      if (filteredBuildings.isNotEmpty) {
-        // إضافة المباني إلى قائمة الأماكن المرئية
-        _visiblePlaces.addAll(filteredBuildings);
-        _updatePlacesOnMap(_visiblePlaces);
-
-        if (_buildingsAdded) {
-          _updateBuildingsOnMap(filteredBuildings);
-        }
-
-        // ضبط الخريطة لعرض جميع المباني
-        _fitPlacesInView(filteredBuildings);
-      }
-
-      // إخبار المستخدم بعدد المباني التي تم العثور عليها
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'تم العثور على ${filteredBuildings.length} مبنى داخل ${place.placeName}',
-            ),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      print('Error searching buildings in place: $e');
-    }
-  }
 
   // ضبط حدود الخريطة لعرض جميع الأماكن
-  void _fitPlacesInView(List<PlaceModel> places) {
-    if (places.isEmpty || _mapboxMap == null) return;
-
-    try {
-      double minLat = 90.0, maxLat = -90.0, minLng = 180.0, maxLng = -180.0;
-
-      // العثور على الحدود التي تشمل جميع المواقع
-      for (final place in places) {
-        final lat = place.latitude;
-        final lng = place.longitude;
-
-        minLat = minLat > lat ? lat : minLat;
-        maxLat = maxLat < lat ? lat : maxLat;
-        minLng = minLng > lng ? lng : minLng;
-        maxLng = maxLng < lng ? lng : maxLng;
-      }
-
-      // إضافة هامش للحدود
-      final latDelta = (maxLat - minLat) * 0.2;
-      final lngDelta = (maxLng - minLng) * 0.2;
-
-      final southwest = Point(
-        coordinates: Position(minLng - lngDelta, minLat - latDelta),
-      );
-      final northeast = Point(
-        coordinates: Position(maxLng + lngDelta, maxLat + latDelta),
-      );
-
-      if (!_isValidCoordinate(southwest.coordinates) ||
-          !_isValidCoordinate(northeast.coordinates)) {
-        print('Invalid coordinates for fitting map');
-        return;
-      }
-
-      final bounds = CoordinateBounds(
-        southwest: southwest,
-        northeast: northeast,
-        infiniteBounds: false,
-      );
-
-      _mapboxMap!
-          .cameraForCoordinateBounds(
-            bounds,
-            MbxEdgeInsets(top: 100, left: 50, bottom: 150, right: 50),
-            null,
-            null,
-            null,
-            null,
-          )
-          .then((camera) {
-            _mapboxMap!.flyTo(camera, MapAnimationOptions(duration: 1000));
-          });
-
-      print('Map adjusted to show all places');
-    } catch (e) {
-      print('Error fitting places in view: $e');
-    }
-  }
-
-  bool _isValidCoordinate(Position position) {
-    return position.lat >= -90 &&
-        position.lat <= 90 &&
-        position.lng >= -180 &&
-        position.lng <= 180;
-  }
 
   void _updateMapStyle() {
     if (_mapboxMap == null) return;
