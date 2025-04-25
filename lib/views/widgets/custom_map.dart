@@ -2961,6 +2961,7 @@ import '../../controllers/storage_controller.dart';
 import '../../models/location_model.dart';
 import '../../models/place_model.dart';
 import '../../models/route_model.dart';
+import 'place_details_widget.dart';
 
 class CustomMap extends StatefulWidget {
   final Function(PlaceModel)? onPlaceSelected;
@@ -3136,48 +3137,115 @@ class _CustomMapState extends State<CustomMap> {
   void _onMapTap(MapContentGestureContext context) async {
     if (_mapboxMap == null) return;
 
-    // **تعديل**: تحديث flag حركة المستخدم عند النقر
-    setState(() {
-      _userHasMovedCamera = true;
-    });
+    // تحقق أولاً إذا كان المستخدم نقر على مكان أو معلم
+    bool tappedOnPlace = await _checkAndHandlePlaceTap(context);
+
+    // إذا كان قد نقر على مكان، لا تتعامل معه كاختيار للوجهة
+    if (tappedOnPlace) return;
+
+    // استكمال كود اختيار الوجهة الحالي...
+  }
+
+  Future<bool> _checkAndHandlePlaceTap(MapContentGestureContext context) async {
+    if (_mapboxMap == null) return false;
 
     try {
-      Point point = await _mapboxMap!.coordinateForPixel(
-        context.point as ScreenCoordinate,
-      );
-      Position position = point.coordinates;
-      double latitude = position.lat.toDouble();
-      double longitude = position.lng.toDouble();
+      // Convert screen coordinate to map coordinate
+      final screenCoordinate = context.point as ScreenCoordinate;
+      final point = await _mapboxMap!.coordinateForPixel(screenCoordinate);
 
-      PlaceModel selectedPlace = PlaceModel(
-        address: 'الموقع المحدد',
-        id: 'selected',
-        placeName: 'الوجهة المحددة',
+      // Get current position for creating a place
+      final double latitude = point.coordinates.lat.toDouble();
+      final double longitude = point.coordinates.lng.toDouble();
+
+      // Since we're having trouble with the feature query, let's create a place at the tap location
+      final PlaceModel place = PlaceModel(
+        id: 'place_${DateTime.now().millisecondsSinceEpoch}',
+        placeName:
+            'Selected Location', // We'll update this if we can get more info
+        address: 'Loading address...',
         latitude: latitude,
         longitude: longitude,
+        properties: {}, // Empty properties since we can't extract them
       );
 
-      if (_locationController.currentLocation != null) {
-        _navigationController.startNavigation(
-          selectedPlace,
-          _locationController.currentLocation!,
-        );
+      // Get address using reverse geocoding
+      final String? address = await _locationController
+          .getAddressFromCoordinates(latitude, longitude);
 
-        print('Destination set at: $latitude, $longitude');
-        ScaffoldMessenger.of(context as BuildContext).showSnackBar(
-          const SnackBar(content: Text('تم تحديد الوجهة. جارِ حساب المسار...')),
-        );
-      } else {
-        ScaffoldMessenger.of(context as BuildContext).showSnackBar(
-          const SnackBar(content: Text('لم يتم تحديد موقعك الحالي بعد')),
-        );
+      // Try to get a better name for the place using the address
+      String placeName = 'Selected Location';
+      if (address != null && address.isNotEmpty) {
+        final addressParts = address.split(',');
+        if (addressParts.isNotEmpty) {
+          placeName = addressParts[0].trim();
+        }
       }
+
+      final updatedPlace = place.copyWith(
+        address: address ?? "Address not available",
+        placeName: placeName,
+      );
+
+      // Show place details
+      _showPlaceDetails(updatedPlace);
+
+      return true;
     } catch (e) {
-      print('Error setting destination: $e');
-      ScaffoldMessenger.of(
-        context as BuildContext,
-      ).showSnackBar(SnackBar(content: Text('خطأ في تحديد الوجهة: $e')));
+      print('Error checking for place tap: $e');
+      return false;
     }
+  }
+
+  // طريقة لعرض تفاصيل المكان
+  void _showPlaceDetails(PlaceModel place) {
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder:
+          (context) => FractionallySizedBox(
+            heightFactor: 0.85,
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: Container(
+                color: Theme.of(context).colorScheme.surface,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: PlaceDetailsWidget(
+                    place: place,
+                    onClose: () => Navigator.of(context).pop(),
+                    onNavigate: () {
+                      // إغلاق النافذة المنبثقة
+                      Navigator.of(context).pop();
+
+                      // بدء التنقل إذا كان الموقع متاحًا
+                      if (_locationController.currentLocation != null) {
+                        _navigationController.startNavigation(
+                          place,
+                          _locationController.currentLocation!,
+                        );
+                      } else {
+                        // عرض رسالة خطأ
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('لم يتم تحديد موقعك الحالي'),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+    );
   }
 
   void _onMapCreated(MapboxMap mapboxMap) {

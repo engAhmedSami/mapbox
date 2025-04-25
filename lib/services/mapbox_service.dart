@@ -127,4 +127,26 @@ class MapboxService {
       return [];
     }
   }
+
+  // الحصول على تفاصيل مكان بواسطة المعرف
+  Future<Map<String, dynamic>?> getPlaceDetails(String placeId) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '${AppConstants.mapboxGeocodingUrl}/$placeId.json?access_token=${AppConstants.mapboxAccessToken}&language=ar',
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = json.decode(response.body);
+        return data;
+      } else {
+        log('فشل في الحصول على تفاصيل المكان: ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      log('خطأ في الحصول على تفاصيل المكان: $e');
+      return null;
+    }
+  }
 }
