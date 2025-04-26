@@ -52,12 +52,12 @@ class _CustomMapState extends State<CustomMap> {
   bool _isFollowingUser = false; // هل الكاميرا تتبع المستخدم؟
   bool _arrowAdded = false; // هل تمت إضافة طبقة السهم؟
   LocationModel? _previousLocation; // تخزين الموقع السابق لحساب الاتجاه
-
+  bool _isStyleLoading = false; // Add this to your state variables
   // معرفات طبقات الخريطة
   final String _routeLayerId = 'route-layer';
   final String _routeSourceId = 'route-source';
   final String _userLocationSourceId = 'user-location-source';
-  final String _userLocationLayerId = 'user-location-layer';
+  final String userLocationLayerId = 'user-location-layer';
   final String _destinationSourceId = 'destination-source';
   final String _destinationLayerId = 'destination-layer';
   final String _destinationCircleLayerId = 'destination-circle-layer';
@@ -261,33 +261,76 @@ class _CustomMapState extends State<CustomMap> {
   }
 
   // تحميل الأماكن المرئية في النطاق الحالي للخريطة
+  Timer? _placesDebounceTimer;
+  Timer? _buildingsDebounceTimer;
+
   Future<void> _loadVisiblePlaces() async {
-    if (_mapboxMap == null || !_layersInitialized) return;
+    if (_mapboxMap == null || !_layersInitialized || _isStyleLoading) return;
 
-    try {
-      // الحصول على حدود الخريطة المرئية
+    // Cancel any existing debounce timer
+    _placesDebounceTimer?.cancel();
 
-      double lat = await _mapboxMap!.getCameraState().then(
-        (state) => state.center.coordinates.lat.toDouble(),
-      );
-      double lng = await _mapboxMap!.getCameraState().then(
-        (state) => state.center.coordinates.lng.toDouble(),
-      );
+    // Debounce the operation by 500ms
+    _placesDebounceTimer = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        double lat = await _mapboxMap!.getCameraState().then(
+          (state) => state.center.coordinates.lat.toDouble(),
+        );
+        double lng = await _mapboxMap!.getCameraState().then(
+          (state) => state.center.coordinates.lng.toDouble(),
+        );
 
-      // استخدام الموقع الحالي كمركز للبحث
-      final results = await _mapboxService.searchPlaces(
-        '', // بحث فارغ للحصول على الأماكن القريبة
-        nearLat: lat,
-        nearLng: lng,
-      );
+        final results = await _mapboxService.searchPlaces(
+          '',
+          nearLat: lat,
+          nearLng: lng,
+        );
 
-      _visiblePlaces = results;
+        _visiblePlaces = results;
 
-      // تحديث طبقة الأماكن على الخريطة
-      _updatePlacesOnMap(_visiblePlaces);
-    } catch (e) {
-      print('Error loading visible places: $e');
-    }
+        _updatePlacesOnMap(_visiblePlaces);
+      } catch (e) {
+        print('Error loading visible places: $e');
+      }
+    });
+  }
+
+  Future<void> _loadNearbyBuildings(LocationModel location) async {
+    if (_mapboxMap == null || !_layersInitialized || _isStyleLoading) return;
+
+    // Cancel any existing debounce timer
+    _buildingsDebounceTimer?.cancel();
+
+    // Debounce the operation by 500ms
+    _buildingsDebounceTimer = Timer(
+      const Duration(milliseconds: 500),
+      () async {
+        try {
+          final buildings = await _mapboxService.searchPlaces(
+            'building',
+            nearLat: location.latitude,
+            nearLng: location.longitude,
+          );
+
+          final filteredBuildings =
+              buildings.where((place) {
+                final name = place.placeName.toLowerCase();
+                final address = place.address.toLowerCase();
+                return name.contains('مبنى') ||
+                    name.contains('مدخل') ||
+                    name.contains('بوابة') ||
+                    name.contains('قاعة') ||
+                    address.contains('مبنى');
+              }).toList();
+
+          if (filteredBuildings.isNotEmpty) {
+            _updateBuildingsOnMap(filteredBuildings);
+          }
+        } catch (e) {
+          print('Error loading nearby buildings: $e');
+        }
+      },
+    );
   }
 
   // التحقق مما إذا كان النقر على مكان
@@ -404,7 +447,6 @@ class _CustomMapState extends State<CustomMap> {
     _mapboxMap = mapboxMap;
     print('Map created');
 
-    // تمكين تتبع الموقع
     _mapboxMap!.location.updateSettings(
       LocationComponentSettings(
         enabled: true,
@@ -413,42 +455,65 @@ class _CustomMapState extends State<CustomMap> {
       ),
     );
 
-    // بدء تحديثات الكاميرا الدورية إذا كان تتبع موقع المستخدم مفعلاً
     if (widget.followUserLocation) {
-      _cameraUpdateTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-        if (_mapboxMap != null && widget.followUserLocation) {
+      _isFollowingUser = true;
+      _cameraUpdateTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+        if (_mapboxMap != null &&
+            widget.followUserLocation &&
+            _isFollowingUser) {
           _goToCurrentLocation();
         }
       });
     }
   }
 
-  void _onStyleLoaded(styleLoadedEventData) async {
+  void _onStyleLoaded(StyleLoadedEventData styleLoadedEventData) async {
+    if (!mounted) return;
+
     print('Map style loaded');
 
-    // ضمان تهيئة الطبقات عند تحميل النمط
-    await Future.delayed(const Duration(milliseconds: 500));
+    setState(() {
+      _isStyleLoading = true; // Set flag during style loading
+    });
 
-    await _initializeMapLayers();
-    _goToCurrentLocation();
+    try {
+      // Reset flags and initialize layers
+      _layersInitialized = false;
+      _placesAdded = false;
+      _buildingsAdded = false;
+      _arrowAdded = false;
 
-    // تحميل الأماكن المرئية بعد تهيئة الطبقات
-    _loadVisiblePlaces();
+      // Initialize layers
+      await _initializeMapLayers();
 
-    // التحقق مما إذا كان هناك تنقل نشط وتحديث الخريطة وفقاً لذلك
-    if (_navigationController.isNavigating) {
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      if (_navigationController.destination != null) {
-        _updateDestinationOnMap(
-          _navigationController.destination!.latitude,
-          _navigationController.destination!.longitude,
-          _navigationController.destination!.placeName,
-        );
+      // Update the map with the current state
+      if (_locationController.currentLocation != null) {
+        _updateDirectionArrow(_locationController.currentLocation!);
+        _goToCurrentLocation();
       }
 
-      if (_navigationController.currentRoute != null) {
-        _updateRouteOnMap(_navigationController.currentRoute!);
+      // Load visible places
+      await _loadVisiblePlaces();
+
+      if (_navigationController.isNavigating) {
+        if (_navigationController.destination != null) {
+          _updateDestinationOnMap(
+            _navigationController.destination!.latitude,
+            _navigationController.destination!.longitude,
+            _navigationController.destination!.placeName,
+          );
+        }
+        if (_navigationController.currentRoute != null) {
+          _updateRouteOnMap(_navigationController.currentRoute!);
+        }
+      }
+    } catch (e) {
+      print('Error in onStyleLoaded: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStyleLoading = false; // Reset flag after style is loaded
+        });
       }
     }
   }
@@ -459,35 +524,35 @@ class _CustomMapState extends State<CustomMap> {
     try {
       print('Initializing map layers...');
 
-      // إضافة مصدر وطبقات موقع المستخدم
-      await _mapboxMap!.style.addSource(
-        GeoJsonSource(
-          id: _userLocationSourceId,
-          data: '{"type":"FeatureCollection","features":[]}',
-        ),
-      );
+      // // إضافة مصدر وطبقات موقع المستخدم
+      // await _mapboxMap!.style.addSource(
+      //   GeoJsonSource(
+      //     id: _userLocationSourceId,
+      //     data: '{"type":"FeatureCollection","features":[]}',
+      //   ),
+      // );
 
-      await _mapboxMap!.style.addLayer(
-        CircleLayer(
-          id: "${_userLocationLayerId}_outer",
-          sourceId: _userLocationSourceId,
-          circleRadius: 18.0,
-          circleColor: 0x554882C4,
-          circleStrokeWidth: 2.0,
-          circleStrokeColor: 0xFF4882C4,
-        ),
-      );
+      // await _mapboxMap!.style.addLayer(
+      //   CircleLayer(
+      //     id: "${_userLocationLayerId}_outer",
+      //     sourceId: _userLocationSourceId,
+      //     circleRadius: 18.0,
+      //     circleColor: 0x554882C4,
+      //     circleStrokeWidth: 2.0,
+      //     circleStrokeColor: 0xFF4882C4,
+      //   ),
+      // );
 
-      await _mapboxMap!.style.addLayer(
-        CircleLayer(
-          id: _userLocationLayerId,
-          sourceId: _userLocationSourceId,
-          circleRadius: 10.0,
-          circleColor: 0xFF4882C4,
-          circleStrokeWidth: 3.0,
-          circleStrokeColor: 0xFFFFFFFF,
-        ),
-      );
+      // await _mapboxMap!.style.addLayer(
+      //   CircleLayer(
+      //     id: _userLocationLayerId,
+      //     sourceId: _userLocationSourceId,
+      //     circleRadius: 10.0,
+      //     circleColor: 0xFF4882C4,
+      //     circleStrokeWidth: 3.0,
+      //     circleStrokeColor: 0xFFFFFFFF,
+      //   ),
+      // );
 
       // إضافة مصدر وطبقات الوجهة
       await _mapboxMap!.style.addSource(
@@ -945,13 +1010,24 @@ class _CustomMapState extends State<CustomMap> {
     }
   }
 
-  void _onLocationControllerChanged() {
+  DateTime? _lastLocationUpdate;
+  final Duration _locationUpdateThrottle = const Duration(
+    milliseconds: 1000,
+  ); // Increase to 1000ms
+
+  void _onLocationControllerChanged() async {
     if (_locationController.currentLocation != null) {
+      final now = DateTime.now();
+      if (_lastLocationUpdate != null &&
+          now.difference(_lastLocationUpdate!) < _locationUpdateThrottle) {
+        return; // Skip if the last update was too recent
+      }
+      _lastLocationUpdate = now;
+
       if (!_layersInitialized) {
         _initializeMapLayers();
       } else {
         _previousLocation = _locationController.currentLocation;
-        _updateUserLocationOnMap(_locationController.currentLocation!);
 
         if (_previousLocation != null) {
           _userBearing = _calculateBearing(
@@ -962,15 +1038,41 @@ class _CustomMapState extends State<CustomMap> {
           );
         }
 
-        // تحديث الأماكن عند تغير الموقع إذا لم يحرك المستخدم الكاميرا
+        _updateDirectionArrow(_locationController.currentLocation!);
+
+        if (_isFollowingUser) {
+          _goToCurrentLocationWithBearing();
+        }
+
         if (!_userHasMovedCamera && _placesAdded) {
           _loadVisiblePlaces();
+        }
+
+        if (_buildingsAdded && _mapboxMap != null) {
+          final zoom = await _mapboxMap!.getCameraState().then(
+            (state) => state.zoom,
+          );
+          if (zoom > 17) {
+            _loadNearbyBuildings(_locationController.currentLocation!);
+          }
         }
       }
     }
   }
 
+  DateTime? _lastNavigationUpdate;
+  final Duration _navigationUpdateThrottle = const Duration(milliseconds: 1000);
+
   void _onNavigationControllerChanged() async {
+    if (_mapboxMap == null || !mounted) return;
+
+    final now = DateTime.now();
+    if (_lastNavigationUpdate != null &&
+        now.difference(_lastNavigationUpdate!) < _navigationUpdateThrottle) {
+      return; // Skip if the last navigation update was too recent
+    }
+    _lastNavigationUpdate = now;
+
     if (!_layersInitialized) {
       await _initializeMapLayers();
       return;
@@ -987,7 +1089,6 @@ class _CustomMapState extends State<CustomMap> {
         print(
           'Updating route - points: ${_navigationController.currentRoute!.geometry.length}',
         );
-        // إعادة تعيين flag حركة المستخدم عند تحميل روت جديد
         if (isFirstLoad) {
           _userHasMovedCamera = false;
         }
@@ -1016,9 +1117,14 @@ class _CustomMapState extends State<CustomMap> {
     double longitude,
     String name,
   ) async {
-    try {
-      if (!_layersInitialized || _mapboxMap == null) return;
+    if (!mounted ||
+        !_layersInitialized ||
+        _mapboxMap == null ||
+        _isStyleLoading) {
+      return;
+    }
 
+    try {
       print('Updating destination: $latitude, $longitude, $name');
 
       final Map<String, dynamic> featureCollection = {
@@ -1047,7 +1153,7 @@ class _CustomMapState extends State<CustomMap> {
         _layersInitialized = false;
         await _initializeMapLayers();
 
-        final newSourceObj = await _mapboxMap!.style.getSource(
+        final newSourceObj = await _mapboxMap?.style.getSource(
           _destinationSourceId,
         );
         if (newSourceObj != null) {
@@ -1097,9 +1203,9 @@ class _CustomMapState extends State<CustomMap> {
   }
 
   void _updateUserLocationOnMap(LocationModel location) async {
-    try {
-      if (!_layersInitialized || _mapboxMap == null) return;
+    if (!mounted || _mapboxMap == null || !_layersInitialized) return;
 
+    try {
       final Map<String, dynamic> featureCollection = {
         'type': 'FeatureCollection',
         'features': [
@@ -1125,10 +1231,8 @@ class _CustomMapState extends State<CustomMap> {
         source.updateGeoJSON(geoJsonString);
       } else {
         print('User location source not found - reinitializing layers');
-        _layersInitialized = false;
         await _initializeMapLayers();
-
-        final newSourceObj = await _mapboxMap!.style.getSource(
+        final newSourceObj = await _mapboxMap?.style.getSource(
           _userLocationSourceId,
         );
         if (newSourceObj != null) {
@@ -1143,50 +1247,16 @@ class _CustomMapState extends State<CustomMap> {
         _goToCurrentLocationWithBearing();
       }
 
-      // البحث عن المباني القريبة إذا كان المستخدم قريبًا بما فيه الكفاية
       if (_buildingsAdded && _mapboxMap != null) {
         final zoom = await _mapboxMap!.getCameraState().then(
           (state) => state.zoom,
         );
-        // تحميل المباني فقط عند مستوى التكبير العالي
         if (zoom > 17) {
           _loadNearbyBuildings(location);
         }
       }
     } catch (e) {
       print('Error updating user location on map: $e');
-    }
-  }
-
-  // تحميل المباني القريبة
-  Future<void> _loadNearbyBuildings(LocationModel location) async {
-    try {
-      // استخدام خدمة Mapbox للبحث عن المباني القريبة
-      final buildings = await _mapboxService.searchPlaces(
-        'building', // البحث عن كلمة "مبنى"
-        nearLat: location.latitude,
-        nearLng: location.longitude,
-      );
-
-      // فلترة المباني بناءً على الخصائص
-      final filteredBuildings =
-          buildings.where((place) {
-            // تضمين الأماكن التي تحتوي كلمة مبنى أو مدخل أو قاعة في اسمها أو عنوانها
-            final name = place.placeName.toLowerCase();
-            final address = place.address.toLowerCase();
-            return name.contains('مبنى') ||
-                name.contains('مدخل') ||
-                name.contains('بوابة') ||
-                name.contains('قاعة') ||
-                address.contains('مبنى');
-          }).toList();
-
-      // في حالة وجود مباني، قم بتحديث طبقة المباني
-      if (filteredBuildings.isNotEmpty) {
-        _updateBuildingsOnMap(filteredBuildings);
-      }
-    } catch (e) {
-      print('Error loading nearby buildings: $e');
     }
   }
 
@@ -1233,9 +1303,14 @@ class _CustomMapState extends State<CustomMap> {
   }
 
   void _updateRouteOnMap(RouteModel route) async {
-    try {
-      if (!_layersInitialized || _mapboxMap == null) return;
+    if (!mounted ||
+        !_layersInitialized ||
+        _mapboxMap == null ||
+        _isStyleLoading) {
+      return;
+    }
 
+    try {
       print('Updating route - points count: ${route.geometry.length}');
 
       if (route.geometry.isEmpty) {
@@ -1262,8 +1337,6 @@ class _CustomMapState extends State<CustomMap> {
         final source = sourceObj as GeoJsonSource;
         source.updateGeoJSON(geoJsonString);
 
-        // استخدام _positionCameraBehindUser بدلاً من _fitRouteInView
-        // لضبط الكاميرا خلف المستخدم عند تحميل الروت
         if (isFirstLoad || (!_userHasMovedCamera && !_isFollowingUser)) {
           if (_locationController.currentLocation != null) {
             _positionCameraBehindUser(
@@ -1278,7 +1351,7 @@ class _CustomMapState extends State<CustomMap> {
         _layersInitialized = false;
         await _initializeMapLayers();
 
-        final newSourceObj = await _mapboxMap!.style.getSource(_routeSourceId);
+        final newSourceObj = await _mapboxMap?.style.getSource(_routeSourceId);
         if (newSourceObj != null) {
           final source = newSourceObj as GeoJsonSource;
           source.updateGeoJSON(geoJsonString);
@@ -1388,8 +1461,20 @@ class _CustomMapState extends State<CustomMap> {
     }
   }
 
+  DateTime? _lastCameraUpdate;
+  final Duration _cameraUpdateThrottle = const Duration(
+    milliseconds: 2000,
+  ); // Increase to 2000ms
+
   void _goToCurrentLocationWithBearing() {
     if (_locationController.currentLocation != null && _mapboxMap != null) {
+      final now = DateTime.now();
+      if (_lastCameraUpdate != null &&
+          now.difference(_lastCameraUpdate!) < _cameraUpdateThrottle) {
+        return; // Skip if the last camera update was too recent
+      }
+      _lastCameraUpdate = now;
+
       _mapboxMap!.flyTo(
         CameraOptions(
           center: Point(
@@ -1413,82 +1498,116 @@ class _CustomMapState extends State<CustomMap> {
 
   // تبديل عرض المباني ثلاثية الأبعاد
   void _toggleBuildingsView() async {
-    if (_mapboxMap == null) return;
+    if (_mapboxMap == null || !mounted) return;
 
     setState(() {
+      _isStyleLoading = true; // Set flag to indicate style is loading
       _buildingsAdded = !_buildingsAdded;
     });
 
-    if (_buildingsAdded) {
-      // تغيير نمط الخريطة إلى نمط يدعم المباني ثلاثية الأبعاد (مثل Mapbox Streets)
-      await _mapboxMap!.style.setStyleURI("mapbox://styles/mapbox/streets-v12");
-
-      // انتظار تحميل النمط
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // إضافة طبقة المباني ثلاثية الأبعاد
-      await _add3DBuildingsLayer();
-
-      // ضبط الكاميرا بزاوية مناسبة للعرض ثلاثي الأبعاد
-      if (_locationController.currentLocation != null) {
-        _mapboxMap!.flyTo(
-          CameraOptions(
-            center: Point(
-              coordinates: Position(
-                _locationController.currentLocation!.longitude,
-                _locationController.currentLocation!.latitude,
-              ),
-            ),
-            zoom: 16.0, // تكبير مناسب لرؤية التفاصيل
-            pitch: 60.0, // زاوية ميل الكاميرا (أساسية للعرض ثلاثي الأبعاد)
-            bearing: 0.0, // اتجاه الكاميرا
-          ),
-          MapAnimationOptions(duration: 1000),
+    try {
+      if (_buildingsAdded) {
+        // Switch to a style that supports 3D buildings
+        await _mapboxMap!.style.setStyleURI(
+          "mapbox://styles/mapbox/streets-v12",
         );
-      }
-    } else {
-      // العودة إلى النمط العادي
-      if (_storageController.isDarkMode) {
-        await _mapboxMap!.style.setStyleURI(AppConstants.nightMapStyle);
+
+        // Reset flags
+        _layersInitialized = false;
+        _placesAdded = false;
+        _buildingsAdded = false;
+        _arrowAdded = false;
+
+        // Wait for the style to load
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        // Re-initialize layers
+        await _initializeMapLayers();
+
+        // Add 3D buildings layer
+        await _add3DBuildingsLayer();
+
+        if (_locationController.currentLocation != null) {
+          _mapboxMap!.flyTo(
+            CameraOptions(
+              center: Point(
+                coordinates: Position(
+                  _locationController.currentLocation!.longitude,
+                  _locationController.currentLocation!.latitude,
+                ),
+              ),
+              zoom: 16.0,
+              pitch: 60.0,
+              bearing: 0.0,
+            ),
+            MapAnimationOptions(duration: 1000),
+          );
+        }
       } else {
-        await _mapboxMap!.style.setStyleURI(AppConstants.outdoorsStyle);
+        // Switch back to the original style
+        String mapStyle =
+            _storageController.isDarkMode
+                ? AppConstants.nightMapStyle
+                : AppConstants.outdoorsStyle;
+        await _mapboxMap!.style.setStyleURI(mapStyle);
+
+        // Reset flags
+        _layersInitialized = false;
+        _placesAdded = false;
+        _buildingsAdded = false;
+        _arrowAdded = false;
+
+        // Wait for the style to load
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        // Re-initialize layers
+        await _initializeMapLayers();
+
+        if (_locationController.currentLocation != null) {
+          _mapboxMap!.flyTo(
+            CameraOptions(
+              center: Point(
+                coordinates: Position(
+                  _locationController.currentLocation!.longitude,
+                  _locationController.currentLocation!.latitude,
+                ),
+              ),
+              zoom: 15.0,
+              pitch: 0.0,
+              bearing: 0.0,
+            ),
+            MapAnimationOptions(duration: 1000),
+          );
+        }
       }
 
-      // العودة إلى العرض العادي
-      if (_locationController.currentLocation != null) {
-        _mapboxMap!.flyTo(
-          CameraOptions(
-            center: Point(
-              coordinates: Position(
-                _locationController.currentLocation!.longitude,
-                _locationController.currentLocation!.latitude,
-              ),
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _buildingsAdded
+                  ? 'تم تفعيل عرض المباني ثلاثية الأبعاد'
+                  : 'تم إيقاف عرض المباني ثلاثية الأبعاد',
             ),
-            zoom: 15.0,
-            pitch: 0.0, // بدون ميل
-            bearing: 0.0,
+            duration: const Duration(seconds: 2),
           ),
-          MapAnimationOptions(duration: 1000),
         );
+      }
+    } catch (e) {
+      print('Error toggling buildings view: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStyleLoading = false; // Reset flag after style is loaded
+        });
       }
     }
-
-    // ignore: use_build_context_synchronously
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _buildingsAdded
-              ? 'تم تفعيل عرض المباني ثلاثية الأبعاد'
-              : 'تم إيقاف عرض المباني ثلاثية الأبعاد',
-        ),
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   Future<void> _add3DBuildingsLayer() async {
+    if (!mounted || _mapboxMap == null) return;
+
     try {
-      // إضافة طبقة المباني ثلاثية الأبعاد
       final layerProperties = {
         "id": "3d-buildings",
         "source": "composite",
@@ -1508,7 +1627,6 @@ class _CustomMapState extends State<CustomMap> {
     } catch (e) {
       print('خطأ في إضافة طبقة المباني: $e');
 
-      // إذا فشلت الطريقة الأولى، نجرب طريقة أخرى
       try {
         await _mapboxMap!.style.addSource(
           GeoJsonSource(
@@ -1599,20 +1717,44 @@ class _CustomMapState extends State<CustomMap> {
 
   // ضبط حدود الخريطة لعرض جميع الأماكن
 
-  void _updateMapStyle() {
-    if (_mapboxMap == null) return;
+  void _updateMapStyle() async {
+    if (_mapboxMap == null || !mounted) return;
+
+    setState(() {
+      _isStyleLoading = true; // Set flag to indicate style is loading
+    });
 
     String mapStyle =
         _storageController.isDarkMode
             ? AppConstants.nightMapStyle
             : AppConstants.dayMapStyle;
 
-    _mapboxMap!.style.setStyleURI(mapStyle);
+    // Reset flags to prevent access during style change
     _layersInitialized = false;
     _placesAdded = false;
     _buildingsAdded = false;
     _arrowAdded = false;
-    print('Map style updated: $mapStyle');
+
+    try {
+      // Load the new style
+      await _mapboxMap!.style.setStyleURI(mapStyle);
+
+      // Wait for the style to fully load
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Re-initialize layers after the style is loaded
+      await _initializeMapLayers();
+
+      print('Map style updated and layers re-initialized: $mapStyle');
+    } catch (e) {
+      print('Error updating map style: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStyleLoading = false; // Reset flag after style is loaded
+        });
+      }
+    }
   }
 
   String _createEmptyPointFeatureCollection() {
@@ -1625,10 +1767,25 @@ class _CustomMapState extends State<CustomMap> {
 
   @override
   void dispose() {
+    // Cancel timers
     _cameraUpdateTimer?.cancel();
     _resetUserMovedCameraTimer?.cancel();
+    _placesDebounceTimer?.cancel();
+    _buildingsDebounceTimer?.cancel();
+
+    // Remove listeners
     _locationController.removeListener(_onLocationControllerChanged);
     _navigationController.removeListener(_onNavigationControllerChanged);
+
+    // Clear map reference and reset flags
+    _mapboxMap = null;
+    _layersInitialized = false;
+    _placesAdded = false;
+    _buildingsAdded = false;
+    _arrowAdded = false;
+    _isStyleLoading = false;
+
+    // Call super last
     super.dispose();
   }
 }

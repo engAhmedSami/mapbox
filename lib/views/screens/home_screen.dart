@@ -1,3 +1,4 @@
+// lib/views/screens/home_screen.dart
 // ignore_for_file: use_build_context_synchronously
 
 import 'package:flutter/material.dart';
@@ -114,6 +115,26 @@ class _HomeScreenState extends State<HomeScreen> {
         ).showSnackBar(const SnackBar(content: Text('لا يوجد تنقل حالي')));
       }
     }
+    // لا نحتاج معالجة إضافية هنا لأوامر البحث الصوتي لأن VoiceButton ستعرض النتائج
+    // وستستدعي دالة _handleVoicePlaceSelection عند اختيار مكان
+  }
+
+  // معالجة اختيار مكان من نتائج البحث الصوتي
+  void _handleVoicePlaceSelection(PlaceModel place, String searchType) async {
+    // إذا كان نوع البحث هو وجهة أو بحث عام، ابدأ التنقل
+    if (searchType.contains('destination') ||
+        searchType.contains('nearest_') ||
+        searchType == 'general') {
+      await _handlePlaceSelection(place);
+    }
+    // غير ذلك يمكن إضافة سلوك مخصص حسب نوع البحث
+    else {
+      // للأنواع الأخرى، قد ترغب في عرض تفاصيل المكان أولاً
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تم اختيار ${place.placeName}')));
+      await _handlePlaceSelection(place);
+    }
   }
 
   // Navigate to search screen
@@ -131,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // Handle place selection
-  void _handlePlaceSelection(PlaceModel place) async {
+  Future<void> _handlePlaceSelection(PlaceModel place) async {
     final locationController = Provider.of<LocationController>(
       context,
       listen: false,
@@ -299,7 +320,12 @@ class _HomeScreenState extends State<HomeScreen> {
             bottom: MediaQuery.of(context).padding.bottom + 16,
             left: 0,
             right: 0,
-            child: Center(child: VoiceButton(onCommand: _handleVoiceCommand)),
+            child: Center(
+              child: VoiceButton(
+                onCommand: _handleVoiceCommand,
+                onPlaceSelected: _handleVoicePlaceSelection,
+              ),
+            ),
           ),
 
           // Favorites and recent search button
