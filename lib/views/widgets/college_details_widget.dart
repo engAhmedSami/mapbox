@@ -228,16 +228,12 @@ class CollegeDetailsWidget extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               TextButton.icon(
-                onPressed: () {
-                  // TODO: Implement share functionality
-                },
+                onPressed: () {},
                 icon: const Icon(Icons.share),
                 label: const Text('مشاركة'),
               ),
               TextButton.icon(
-                onPressed: () {
-                  // TODO: Implement add to favorites
-                },
+                onPressed: () {},
                 icon: const Icon(Icons.favorite_border),
                 label: const Text('إضافة للمفضلة'),
               ),
